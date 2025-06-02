@@ -1,0 +1,57 @@
+services:
+  # Сервис для Telegram бота
+  bot:
+    build: .
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./src:/app/src
+      - .:/app
+    networks:
+      - pryton_network
+
+  # Сервис базы данных PostgreSQL
+  db:
+    image: postgres:14-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-pryton_bot}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - pryton_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-pryton_bot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Сервис для администрирования БД (опционально)
+  adminer:
+    image: adminer
+    restart: always
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+    networks:
+      - pryton_network
+
+volumes:
+  postgres_data:
+
+networks:
+  pryton_network:
+    driver: bridge
