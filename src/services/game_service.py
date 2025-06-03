@@ -439,6 +439,21 @@ class GameService:
         game.ended_at = datetime.now()
         db.commit()
         
+        logger.info(f"Игра {game_id} завершена")
+        
+        # Отправляем уведомления о завершении игры
+        from src.services.game_settings_service import GameSettingsService
+        settings = GameSettingsService.get_settings()
+        
+        if settings.notify_on_phase_change or settings.auto_end_game:
+            import asyncio
+            from src.services.enhanced_scheduler_service import get_enhanced_scheduler
+            scheduler = get_enhanced_scheduler()
+            if scheduler:
+                # Запускаем асинхронное уведомление о завершении игры
+                asyncio.create_task(scheduler.notify_game_ended(game_id, "Все водители найдены!"))
+                logger.info(f"Запланировано уведомление о завершении игры {game_id}")
+        
         return True
     
     @staticmethod
@@ -544,7 +559,8 @@ class GameService:
             
             # Если все водители найдены, завершаем игру
             if found_drivers >= total_drivers and total_drivers > 0:
-                return GameService.end_game(game_id)
+                from src.handlers.callback_handler import check_game_completion_callback
+                return check_game_completion_callback(game_id)
             
             return False
             
@@ -666,6 +682,15 @@ class GameService:
             
             db.commit()
             logger.info(f"Администратор {admin_id} завершил игру {game_id}")
+            
+            # Отправляем уведомления о завершении игры
+            import asyncio
+            from src.services.enhanced_scheduler_service import get_enhanced_scheduler
+            scheduler = get_enhanced_scheduler()
+            if scheduler:
+                # Запускаем асинхронное уведомление о завершении игры
+                asyncio.create_task(scheduler.notify_game_ended(game_id, "Завершено администратором"))
+                logger.info(f"Запланировано уведомление о завершении игры {game_id} (админ)")
             
             return True
             

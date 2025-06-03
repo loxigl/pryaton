@@ -767,9 +767,8 @@ async def check_game_completion_callback(context: ContextTypes.DEFAULT_TYPE, gam
         # Если все водители найдены, завершаем игру
         if drivers_found >= total_drivers and total_drivers > 0:
             logger.info(f"Все водители найдены! Завершаем игру {game_id}")
+            # GameService.end_game сам отправляет уведомления, поэтому вызов notify_game_completion_callback не нужен
             GameService.end_game(game_id)
-            # Уведомляем всех участников о завершении игры
-            await notify_game_completion_callback(context, game_id)
         else:
             logger.info(f"Игра {game_id} продолжается: {drivers_found}/{total_drivers} найдено")
             
@@ -921,8 +920,8 @@ async def check_game_completion_inline(context: ContextTypes.DEFAULT_TYPE, game_
         
         # Если все водители найдены, завершаем игру
         if drivers_found >= total_drivers and total_drivers > 0:
+            # GameService.end_game теперь сам отправляет уведомления
             GameService.end_game(game_id)
-            await notify_game_completion_inline(context, game_id)
             
     except Exception as e:
         logger.error(f"Ошибка проверки завершения игры: {e}")
