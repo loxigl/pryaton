@@ -88,4 +88,42 @@ class GameRule(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     def __repr__(self):
-        return f"<GameRule(id={self.id}, version={self.version}, active={self.is_active})>" 
+        return f"<GameRule(id={self.id}, version={self.version}, active={self.is_active})>"
+
+class GameSettings(Base):
+    """Модель настроек игры"""
+    __tablename__ = "game_settings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Настройки автоматизации
+    auto_start_game = Column(Boolean, default=True)  # Автостарт игры по времени
+    auto_start_hiding = Column(Boolean, default=True)  # Автостарт фазы пряток
+    auto_start_searching = Column(Boolean, default=True)  # Автостарт фазы поиска
+    auto_assign_roles = Column(Boolean, default=True)  # Автораспределение ролей
+    auto_end_game = Column(Boolean, default=True)  # Автозавершение игры
+    
+    # Временные настройки (в минутах)
+    hiding_phase_duration = Column(Integer, default=15)  # Длительность фазы пряток
+    searching_phase_duration = Column(Integer, default=60)  # Длительность фазы поиска
+    game_start_notification_time = Column(Integer, default=10)  # За сколько минут уведомлять о старте
+    
+    # Настройки для ручного управления
+    manual_control_mode = Column(Boolean, default=False)  # Полное ручное управление
+    require_admin_approval = Column(Boolean, default=False)  # Требовать подтверждение админа для действий
+    
+    # Настройки уведомлений
+    notify_on_role_assignment = Column(Boolean, default=True)
+    notify_on_phase_change = Column(Boolean, default=True)
+    notify_on_participant_action = Column(Boolean, default=True)
+    
+    # Дополнительные настройки
+    allow_early_start = Column(Boolean, default=True)  # Разрешить досрочный старт
+    min_participants_to_start = Column(Integer, default=3)  # Минимум участников для старта
+    
+    # Поля для аудита
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    def __repr__(self):
+        return f"<GameSettings(id={self.id}, manual_control={self.manual_control_mode})>" 

@@ -61,6 +61,22 @@ class ZoneManagementService:
         except Exception as e:
             logger.error(f"Ошибка создания зоны: {e}")
             return None
+        
+
+
+    @staticmethod
+    def get_zone_by_id(zone_id:int) -> Optional[DistrictZone]:
+        try:
+            db_generator = get_db()
+            db = next(db_generator)
+            zone = db.query(DistrictZone).filter(DistrictZone.id == zone_id).first()
+            return zone
+        except Exception as e:
+            logger.error(f"Ошибка получения зоны по ID: {e}")
+            return None
+        
+
+
     
     @staticmethod
     def get_district_zones_info(district_name: str) -> List[dict]:

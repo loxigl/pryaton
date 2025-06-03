@@ -152,23 +152,80 @@ async def handle_send_location_button(update: Update, context: ContextTypes.DEFA
             )
             return
         
-        role_text = ""
-        if game_context.participant and game_context.participant.role:
-            role = game_context.participant.role.value
-            if role == 'driver':
-                role_text = "🚗 Как водитель, отправьте вашу локацию, чтобы искатели могли вас найти."
-            elif role == 'seeker':
-                role_text = "🔍 Как искатель, отправьте вашу текущую позицию для координации поиска."
+        game = game_context.game
+        participant = game_context.participant
         
-        location_text = (
-            f"📍 <b>Отправка геолокации</b>\n\n"
-            f"{role_text}\n\n"
-            f"Нажмите кнопку ниже для отправки вашего местоположения:"
-        )
+        if not participant or not participant.role:
+            await update.message.reply_text(
+                "❌ Не удалось определить вашу роль в игре",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+            return
         
+        role = participant.role.value
+        
+        # Формируем инструкции в зависимости от роли
+        if role == 'driver':
+            location_text = (
+                f"📍 <b>Отправка геолокации - Водитель</b>\n\n"
+                f"🎮 <b>Игра:</b> {game.district}\n\n"
+                f"🚗 <b>Инструкции для водителя:</b>\n"
+                f"• Найдите укромное место для пряток\n"
+                f"• Убедитесь, что место безопасно\n"
+                f"• Нажмите кнопку ниже для отправки геолокации\n"
+                f"• После отправки ждите искателей\n\n"
+            )
+        else:
+            location_text = (
+                f"📍 <b>Отправка геолокации - Искатель</b>\n\n"
+                f"🎮 <b>Игра:</b> {game.district}\n\n"
+                f"🔍 <b>Инструкции для искателя:</b>\n"
+                f"• Отправляйте свою позицию для координации\n"
+                f"• Это поможет другим искателям\n"
+                f"• Нажмите кнопку ниже для отправки геолокации\n"
+                f"• Продолжайте поиск водителя\n\n"
+            )
+        
+        # Показываем зону игры если она есть
+        if hasattr(game, 'has_game_zone') and game.has_game_zone:
+            zone_info = game.zone_info
+            location_text += (
+                f"🎯 <b>Игровая зона:</b>\n"
+                f"• Центр: {zone_info['center_lat']:.4f}, {zone_info['center_lon']:.4f}\n"
+                f"• Радиус: {zone_info['radius']} метров\n"
+                f"• Площадь: {zone_info['area_km2']} км²\n\n"
+            )
+        
+        location_text += f"📱 Нажмите кнопку ниже для отправки геолокации"
+        
+        # Создаем inline клавиатуру с быстрыми действиями
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        
+        if role == 'driver':
+            inline_buttons = [
+                [InlineKeyboardButton("📸 Фото места", callback_data=f"photo_place_{game.id}")],
+                [InlineKeyboardButton("🚗 Меня нашли", callback_data=f"found_seeker_{game.id}")],
+                [InlineKeyboardButton("📊 Статус игры", callback_data=f"game_status_{game.id}")]
+            ]
+        else:
+            inline_buttons = [
+                [InlineKeyboardButton("📸 Фото находки", callback_data=f"photo_find_{game.id}")],
+                [InlineKeyboardButton("🔍 Нашел водителя", callback_data=f"found_driver_{game.id}")],
+                [InlineKeyboardButton("📊 Статус игры", callback_data=f"game_status_{game.id}")]
+            ]
+        
+        inline_keyboard = InlineKeyboardMarkup(inline_buttons)
+        
+        # Отправляем сообщение с кнопкой геолокации и inline кнопками
         await update.message.reply_text(
             location_text,
             parse_mode="HTML",
+            reply_markup=inline_keyboard
+        )
+        
+        # Дополнительно отправляем keyboard для геолокации
+        await update.message.reply_text(
+            "👇 Используйте кнопку ниже для отправки геолокации:",
             reply_markup=get_game_location_keyboard()
         )
         
@@ -237,7 +294,8 @@ def get_game_status_text(status) -> str:
     status_texts = {
         'recruiting': '📝 Набор участников',
         'upcoming': '⏰ Скоро начнется',
-        'in_progress': '🔥 В процессе',
+        'hiding_phase': '🏃 Фаза пряток',
+        'searching_phase': '🔍 Фаза поиска',
         'completed': '✅ Завершена',
         'canceled': '❌ Отменена'
     }

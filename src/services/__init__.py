@@ -7,13 +7,17 @@ from src.services.scheduler_service import SchedulerService
 from src.services.user_context_service import UserContextService
 from src.services.dynamic_keyboard_service import DynamicKeyboardService
 from src.services.zone_management_service import ZoneManagementService
+from src.services.game_settings_service import GameSettingsService
+from src.services.manual_game_control_service import ManualGameControlService
 
 __all__ = [
     "GameService",
-    "UserService", 
+    "UserService",
     "LocationService",
     "SchedulerService",
     "UserContextService",
     "DynamicKeyboardService",
-    "ZoneManagementService"
+    "ZoneManagementService",
+    "GameSettingsService",
+    "ManualGameControlService"
 ] 

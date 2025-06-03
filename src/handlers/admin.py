@@ -7,7 +7,7 @@ from telegram.ext import (
     MessageHandler, 
     filters
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from loguru import logger
 
@@ -18,8 +18,27 @@ from src.models.game import GameStatus, GameRole
 from src.keyboards.inline import get_admin_game_keyboard
 from src.keyboards.reply import get_district_keyboard, get_contextual_main_keyboard
 
+# Новые импорты для работы с зонами
+from src.services.location_service import LocationService
+from src.services.zone_management_service import ZoneManagementService
+
+# Новые импорты для настроек и ручного управления
+from src.services.game_settings_service import GameSettingsService
+from src.services.manual_game_control_service import ManualGameControlService
+from src.keyboards.inline import (
+    get_game_settings_keyboard, 
+    get_automation_settings_keyboard,
+    get_time_settings_keyboard,
+    get_manual_control_keyboard,
+    get_participants_management_keyboard,
+    get_participant_actions_keyboard
+)
+
 # Состояния для создания игры
-CREATE_DISTRICT, CREATE_DATE, CREATE_TIME, CREATE_MAX_PARTICIPANTS, CREATE_MAX_DRIVERS, CREATE_DESCRIPTION, CREATE_CONFIRM = range(7)
+CREATE_DISTRICT, CREATE_DATE, CREATE_TIME, CREATE_MAX_PARTICIPANTS, CREATE_MAX_DRIVERS, CREATE_DESCRIPTION, CREATE_ZONE, CREATE_CONFIRM = range(8)
+
+# Состояния для создания зон в процессе создания игры
+CREATE_ZONE_NAME, CREATE_ZONE_COORDINATES, CREATE_ZONE_RADIUS, CREATE_ZONE_CONFIRM = range(25, 29)
 
 # Состояния для редактирования правил
 EDIT_RULES = 10
@@ -58,7 +77,8 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
         ["👥 Управление пользователями", "📊 Мониторинг"],
         ["📅 События планировщика", "🏙️ Управление районами"],
         ["🗺 Управление зонами", "👤 Управление ролями"],
-        ["📋 Редактировать правила", "🏠 Главное меню"]
+        ["📋 Редактировать правила", "⚙️ Настройки игры"],
+        ["🏠 Главное меню"]
     ], resize_keyboard=True)
 
 def get_admin_or_main_keyboard(user_id: int, admin_context: bool = False) -> ReplyKeyboardMarkup:
@@ -74,7 +94,7 @@ def get_admin_or_main_keyboard(user_id: int, admin_context: bool = False) -> Rep
     if is_admin and admin_context:
         return get_admin_keyboard()
     else:
-        return get_contextual_main_keyboard(is_admin)
+        return get_contextual_main_keyboard(user_id)
 
 async def admin_command(update: Update, context: CallbackContext) -> int:
     """Обработчик команды /admin - открывает админ-панель"""
@@ -111,7 +131,7 @@ async def admin_games_command(update: Update, context: CallbackContext) -> None:
         return
     
     # Получаем список всех игр (можно добавить пагинацию)
-    all_games = GameService.get_upcoming_games(limit=10)
+    all_games = GameService.get_active_games(limit=10)
     
     if not all_games:
         await update.message.reply_text(
@@ -665,7 +685,7 @@ async def back_to_admin_games_button(update: Update, context: CallbackContext) -
         return
     
     # Получаем список всех игр
-    all_games = GameService.get_upcoming_games(limit=10)
+    all_games = GameService.get_active_games(limit=10)
     
     if not all_games:
         await query.edit_message_text(
@@ -727,7 +747,7 @@ async def create_game_command(update: Update, context: CallbackContext) -> int:
     
     await update.message.reply_text(
         "🆕 <b>Создание новой игры</b>\n\n"
-        "Шаг 1/7: Выберите район проведения игры:",
+        "Шаг 1/8: Выберите район проведения игры:",
         reply_markup=district_keyboard,
         parse_mode="HTML"
     )
@@ -741,7 +761,7 @@ async def process_district(update: Update, context: CallbackContext) -> int:
     
     await update.message.reply_text(
         f"Выбран район: {district}\n\n"
-        "Шаг 2/7: Введите дату проведения игры в формате ДД.ММ.ГГГГ (например, 15.06.2025):",
+        "Шаг 2/8: Введите дату проведения игры в формате ДД.ММ.ГГГГ (например, 15.06.2025):",
         
         reply_markup=ReplyKeyboardRemove()
     )
@@ -764,7 +784,7 @@ async def process_date(update: Update, context: CallbackContext) -> int:
     
     await update.message.reply_text(
         f"Дата: {date_text}\n\n"
-        "Шаг 3/7: Введите время проведения игры в формате ЧЧ:ММ (например, 18:30):"
+        "Шаг 3/8: Введите время проведения игры в формате ЧЧ:ММ (например, 18:30):"
     )
     
     return CREATE_TIME
@@ -790,7 +810,7 @@ async def process_time(update: Update, context: CallbackContext) -> int:
     
     await update.message.reply_text(
         f"Время: {time_text}\n\n"
-        "Шаг 4/7: Введите максимальное количество участников (от 3 до 20):"
+        "Шаг 4/8: Введите максимальное количество участников (от 3 до 20):"
     )
     
     return CREATE_MAX_PARTICIPANTS
@@ -811,7 +831,7 @@ async def process_max_participants(update: Update, context: CallbackContext) -> 
     
     await update.message.reply_text(
         f"Максимальное количество участников: {max_participants}\n\n"
-        f"Шаг 5/7: Введите количество водителей (прячущихся) от 1 до {max_participants - 1}:"
+        f"Шаг 5/8: Введите количество водителей (прячущихся) от 1 до {max_participants - 1}:"
     )
     
     return CREATE_MAX_DRIVERS
@@ -836,7 +856,7 @@ async def process_max_drivers(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
         f"Количество водителей: {max_drivers}\n"
         f"Количество искателей: {max_seekers}\n\n"
-        f"Шаг 6/7: Введите описание игры (или отправьте '-' для пропуска):"
+        f"Шаг 6/8: Введите описание игры (или отправьте '-' для пропуска):"
     )
     
     return CREATE_DESCRIPTION
@@ -850,12 +870,318 @@ async def process_description(update: Update, context: CallbackContext) -> int:
     
     context.user_data["description"] = description
     
+    # Теперь переходим к выбору зоны
+    district = context.user_data["game_district"]
+    
+    # Получаем существующие зоны района
+    district_zones = LocationService.get_district_zones(district)
+    
+    if district_zones:
+        zone_text = (
+            f"🗺️ <b>Шаг 7/8: Выбор игровой зоны</b>\n\n"
+            f"📍 <b>Район:</b> {district}\n\n"
+            f"<b>Доступные зоны района:</b>\n"
+        )
+        
+        keyboard_buttons = []
+        
+        for zone in district_zones:
+            zone_status = "🌟 " if zone.is_default else ""
+            zone_active = "✅ " if zone.is_active else "❌ "
+            zone_text += f"• {zone_active}{zone_status}<b>{zone.zone_name}</b>\n"
+            zone_text += f"  📍 Центр: {zone.center_lat:.4f}, {zone.center_lon:.4f}\n"
+            zone_text += f"  📏 Радиус: {zone.radius}м | 📐 Площадь: {zone.area_km2} км²\n"
+            if zone.description:
+                zone_text += f"  💬 {zone.description}\n"
+            zone_text += "\n"
+            
+            if zone.is_active:
+                keyboard_buttons.append([f"🎯 {zone.zone_name}"])
+        
+        zone_text += (
+            f"<b>Варианты:</b>\n"
+            f"• Выберите существующую зону из списка\n"
+            f"• Нажмите '🆕 Создать новую зону' для игры\n"
+            f"• Нажмите '⚙️ Без зоны' (использовать зону по умолчанию)\n\n"
+            f"<i>🌟 - зона по умолчанию, ✅ - активная, ❌ - неактивная</i>"
+        )
+        
+        keyboard_buttons.extend([
+            ["🆕 Создать новую зону"],
+            ["⚙️ Без зоны (автоматически)"],
+            ["❌ Отменить создание игры"]
+        ])
+        
+    else:
+        zone_text = (
+            f"🗺️ <b>Шаг 7/8: Выбор игровой зоны</b>\n\n"
+            f"📍 <b>Район:</b> {district}\n\n"
+            f"❌ <b>В этом районе пока нет созданных зон</b>\n\n"
+            f"<b>Варианты:</b>\n"
+            f"• 🆕 Создать новую зону для игры\n"
+            f"• ⚙️ Продолжить без зоны (будет создана автоматически)\n"
+        )
+        
+        keyboard_buttons = [
+            ["🆕 Создать новую зону"],
+            ["⚙️ Без зоны (автоматически)"],
+            ["❌ Отменить создание игры"]
+        ]
+    
+    keyboard = ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        zone_text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+    
+    return CREATE_ZONE
+
+async def process_zone_selection(update: Update, context: CallbackContext) -> int:
+    """Обработка выбора зоны"""
+    zone_choice = update.message.text
+    district = context.user_data["game_district"]
+    
+    if zone_choice == "❌ Отменить создание игры":
+        await update.message.reply_text(
+            "❌ Создание игры отменено.",
+            reply_markup=get_admin_or_main_keyboard(update.effective_user.id, True)
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    elif zone_choice == "⚙️ Без зоны (автоматически)":
+        # Игра будет использовать зону по умолчанию автоматически
+        context.user_data["game_zone"] = "auto"
+        zone_info_text = "Игра будет использовать зону района по умолчанию (автоматически)"
+        
+    elif zone_choice == "🆕 Создать новую зону":
+        # Переходим к созданию новой зоны
+        await update.message.reply_text(
+            f"🆕 <b>Создание новой зоны для игры</b>\n\n"
+            f"📍 <b>Район:</b> {district}\n\n"
+            f"Введите название зоны (например: 'Центр парка', 'Торговый центр'):",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="HTML"
+        )
+        return CREATE_ZONE_NAME
+        
+    elif zone_choice.startswith("🎯 "):
+        # Выбрана существующая зона
+        zone_name = zone_choice.replace("🎯 ", "")
+        district_zones = LocationService.get_district_zones(district)
+        selected_zone = next((z for z in district_zones if z.zone_name == zone_name), None)
+        
+        if selected_zone:
+            context.user_data["game_zone"] = selected_zone.id
+            zone_info_text = (
+                f"Выбрана зона: <b>{selected_zone.zone_name}</b>\n"
+                f"📍 Центр: {selected_zone.center_lat:.4f}, {selected_zone.center_lon:.4f}\n"
+                f"📏 Радиус: {selected_zone.radius}м"
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Выбранная зона не найдена. Попробуйте еще раз.",
+                reply_markup=get_district_keyboard()
+            )
+            return CREATE_ZONE
+    else:
+        await update.message.reply_text(
+            "❌ Неизвестный выбор. Пожалуйста, используйте кнопки.",
+            reply_markup=get_district_keyboard()
+        )
+        return CREATE_ZONE
+    
+    # Переходим к подтверждению
+    return await show_final_confirmation(update, context, zone_info_text)
+
+async def process_zone_name(update: Update, context: CallbackContext) -> int:
+    """Обработка ввода названия новой зоны"""
+    zone_name = update.message.text.strip()
+    
+    if len(zone_name) < 3:
+        await update.message.reply_text(
+            "❌ Название зоны должно содержать минимум 3 символа. Попробуйте еще раз:"
+        )
+        return CREATE_ZONE_NAME
+    
+    context.user_data["new_zone_name"] = zone_name
+    
+    await update.message.reply_text(
+        f"Название зоны: <b>{zone_name}</b>\n\n"
+        f"Введите координаты центра зоны в формате: <code>широта,долгота</code>\n"
+        f"Например: <code>55.7558,37.6176</code>\n\n"
+        f"💡 Можно получить координаты из карт Google/Yandex",
+        parse_mode="HTML"
+    )
+    
+    return CREATE_ZONE_COORDINATES
+
+async def process_zone_coordinates(update: Update, context: CallbackContext) -> int:
+    """Обработка ввода координат зоны"""
+    coordinates_text = update.message.text.strip()
+    
+    try:
+        lat_str, lon_str = coordinates_text.split(",")
+        latitude = float(lat_str.strip())
+        longitude = float(lon_str.strip())
+        
+        # Валидация координат
+        if not (-90 <= latitude <= 90):
+            raise ValueError("Широта должна быть в диапазоне от -90 до 90")
+        if not (-180 <= longitude <= 180):
+            raise ValueError("Долгота должна быть в диапазоне от -180 до 180")
+            
+        context.user_data["new_zone_lat"] = latitude
+        context.user_data["new_zone_lon"] = longitude
+        
+    except (ValueError, IndexError) as e:
+        await update.message.reply_text(
+            f"❌ Неверный формат координат: {str(e)}\n\n"
+            f"Введите координаты в формате: <code>широта,долгота</code>\n"
+            f"Например: <code>55.7558,37.6176</code>",
+            parse_mode="HTML"
+        )
+        return CREATE_ZONE_COORDINATES
+    
+    await update.message.reply_text(
+        f"Координаты: <b>{latitude:.6f}, {longitude:.6f}</b>\n\n"
+        f"Введите радиус зоны в метрах (от 100 до 5000):\n"
+        f"💡 Рекомендуется: 500-1500м для городских районов",
+        parse_mode="HTML"
+    )
+    
+    return CREATE_ZONE_RADIUS
+
+async def process_zone_radius(update: Update, context: CallbackContext) -> int:
+    """Обработка ввода радиуса зоны"""
+    try:
+        radius = int(update.message.text.strip())
+        
+        if radius < 100 or radius > 5000:
+            raise ValueError("Радиус должен быть от 100 до 5000 метров")
+            
+        context.user_data["new_zone_radius"] = radius
+        
+        # Показываем предпросмотр новой зоны
+        zone_name = context.user_data["new_zone_name"]
+        latitude = context.user_data["new_zone_lat"]
+        longitude = context.user_data["new_zone_lon"]
+        area_km2 = round((3.14159 * (radius / 1000) ** 2), 2)
+        
+        preview_text = (
+            f"🗺️ <b>Предпросмотр новой зоны</b>\n\n"
+            f"📍 <b>Название:</b> {zone_name}\n"
+            f"🎯 <b>Центр:</b> {latitude:.6f}, {longitude:.6f}\n"
+            f"📏 <b>Радиус:</b> {radius}м\n"
+            f"📐 <b>Площадь:</b> {area_km2} км²\n\n"
+            f"Всё верно?"
+        )
+        
+        keyboard = ReplyKeyboardMarkup([
+            ["✅ Да, создать зону"],
+            ["❌ Нет, изменить"],
+            ["⚙️ Отменить зону (без зоны)"]
+        ], resize_keyboard=True)
+        
+        await update.message.reply_text(
+            preview_text,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        
+        return CREATE_ZONE_CONFIRM
+        
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\nВведите радиус зоны в метрах (от 100 до 5000):"
+        )
+        return CREATE_ZONE_RADIUS
+
+async def process_zone_confirmation(update: Update, context: CallbackContext) -> int:
+    """Обработка подтверждения создания зоны"""
+    confirmation = update.message.text
+    
+    if confirmation == "✅ Да, создать зону":
+        # Создаем новую зону
+        district = context.user_data["game_district"]
+        zone_name = context.user_data["new_zone_name"]
+        latitude = context.user_data["new_zone_lat"]
+        longitude = context.user_data["new_zone_lon"]
+        radius = context.user_data["new_zone_radius"]
+        
+        try:
+            new_zone = ZoneManagementService.create_district_zone(
+                district_name=district,
+                zone_name=zone_name,
+                center_lat=latitude,
+                center_lon=longitude,
+                radius=radius,
+                description=f"Зона создана для игры",
+                is_default=False
+            )
+            
+            if new_zone:
+                context.user_data["game_zone"] = new_zone.id
+                zone_info_text = (
+                    f"Создана новая зона: <b>{zone_name}</b>\n"
+                    f"📍 Центр: {latitude:.4f}, {longitude:.4f}\n"
+                    f"📏 Радиус: {radius}м"
+                )
+                
+                # Очищаем временные данные зоны
+                for key in ["new_zone_name", "new_zone_lat", "new_zone_lon", "new_zone_radius"]:
+                    context.user_data.pop(key, None)
+                    
+                return await show_final_confirmation(update, context, zone_info_text)
+            else:
+                await update.message.reply_text(
+                    "❌ Не удалось создать зону. Продолжаем без зоны.",
+                    reply_markup=ReplyKeyboardRemove()
+                )
+                context.user_data["game_zone"] = "auto"
+                zone_info_text = "Игра будет использовать зону района по умолчанию"
+                return await show_final_confirmation(update, context, zone_info_text)
+                
+        except Exception as e:
+            logger.error(f"Ошибка создания зоны: {e}")
+            await update.message.reply_text(
+                f"❌ Ошибка создания зоны: {str(e)}\nПродолжаем без зоны.",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            context.user_data["game_zone"] = "auto"
+            zone_info_text = "Игра будет использовать зону района по умолчанию"
+            return await show_final_confirmation(update, context, zone_info_text)
+            
+    elif confirmation == "❌ Нет, изменить":
+        # Возвращаемся к вводу названия зоны
+        await update.message.reply_text(
+            "Введите название зоны заново:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return CREATE_ZONE_NAME
+        
+    elif confirmation == "⚙️ Отменить зону (без зоны)":
+        context.user_data["game_zone"] = "auto"
+        zone_info_text = "Игра будет использовать зону района по умолчанию"
+        return await show_final_confirmation(update, context, zone_info_text)
+    
+    else:
+        await update.message.reply_text(
+            "❌ Неизвестный выбор. Используйте кнопки."
+        )
+        return CREATE_ZONE_CONFIRM
+
+async def show_final_confirmation(update: Update, context: CallbackContext, zone_info_text: str) -> int:
+    """Показ финального подтверждения создания игры"""
     # Собираем всю информацию для подтверждения
     district = context.user_data["game_district"]
     game_datetime = context.user_data["game_datetime"]
     max_participants = context.user_data["max_participants"]
     max_drivers = context.user_data["max_drivers"]
     max_seekers = max_participants - max_drivers
+    description = context.user_data.get("description")
     
     confirmation_text = (
         "📋 <b>Подтверждение создания игры</b>\n\n"
@@ -864,6 +1190,7 @@ async def process_description(update: Update, context: CallbackContext) -> int:
         f"👥 <b>Максимум участников:</b> {max_participants}\n"
         f"🚗 <b>Водители:</b> {max_drivers}\n"
         f"🔍 <b>Искатели:</b> {max_seekers}\n"
+        f"🗺️ <b>Игровая зона:</b> {zone_info_text}\n"
     )
     
     if description:
@@ -900,6 +1227,7 @@ async def process_confirmation(update: Update, context: CallbackContext) -> int:
     max_participants = context.user_data["max_participants"]
     max_drivers = context.user_data["max_drivers"]
     description = context.user_data.get("description")
+    game_zone = context.user_data.get("game_zone")
     
     # Получаем пользователя из базы данных по telegram_id
     user, _ = UserService.get_user_by_telegram_id(telegram_id)
@@ -921,14 +1249,48 @@ async def process_confirmation(update: Update, context: CallbackContext) -> int:
             description=description
         )
         
+        # Обработка игровой зоны
+        zone_result_text = ""
+        if game_zone == "auto":
+            # Автоматически устанавливаем зону района по умолчанию
+            if LocationService.auto_set_game_zone_from_district(game):
+                zone_result_text = f"\n🗺️ Автоматически установлена зона района по умолчанию"
+            else:
+                zone_result_text = f"\n⚠️ Зона района не найдена, игра без зоны"
+                
+        elif isinstance(game_zone, int):
+            # Устанавливаем выбранную зону
+            zone = ZoneManagementService.get_zone_by_id(game_zone)
+            if zone:
+                game.set_game_zone(zone.center_lat, zone.center_lon, zone.radius)
+                # Сохраняем изменения
+                from src.models.base import get_db
+                db_generator = get_db()
+                db = next(db_generator)
+                db.add(game)
+                db.commit()
+                zone_result_text = f"\n🗺️ Установлена зона: {zone.zone_name}"
+               
+            else:
+                zone_result_text = f"\n⚠️ Выбранная зона не найдена, игра без зоны"
+        else:
+            zone_result_text = f"\n⚠️ Неизвестная зона, игра без зоны"
+        
         max_seekers = max_participants - max_drivers
-        await update.message.reply_text(
+        success_text = (
             f"✅ <b>Игра успешно создана!</b>\n\n"
             f"ID игры: {game.id}\n"
             f"Район: {game.district}\n"
             f"Дата и время: {game.scheduled_at.strftime('%d.%m.%Y %H:%M')}\n"
-            f"Участников: {game.max_participants} (🚗 {game.max_drivers} водителей, 🔍 {max_seekers} искателей)\n\n"
-            f"Используйте /admingames для управления играми.",
+            f"Участников: {game.max_participants} (🚗 {game.max_drivers} водителей, 🔍 {max_seekers} искателей)"
+            f"{zone_result_text}\n\n"
+            f"Используйте /admingames для управления играми."
+        )
+        db.close()
+        
+        
+        await update.message.reply_text(
+            success_text,
             reply_markup=get_admin_or_main_keyboard(telegram_id, True),
             parse_mode="HTML"
         )
@@ -973,6 +1335,8 @@ async def handle_admin_text(update: Update, context: CallbackContext) -> None:
         return await manage_roles_command(update, context)
     elif text == "📋 Редактировать правила":
         return await edit_rules_command(update, context)
+    elif text == "⚙️ Настройки игры":
+        return await game_settings_command(update, context)
     elif text == "« Назад":
         # Возвращаем в главное меню
         is_admin = UserService.is_admin(user_id)
@@ -1005,6 +1369,11 @@ create_game_conversation = ConversationHandler(
         CREATE_MAX_PARTICIPANTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_max_participants)],
         CREATE_MAX_DRIVERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_max_drivers)],
         CREATE_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_description)],
+        CREATE_ZONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_zone_selection)],
+        CREATE_ZONE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_zone_name)],
+        CREATE_ZONE_COORDINATES: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_zone_coordinates)],
+        CREATE_ZONE_RADIUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_zone_radius)],
+        CREATE_ZONE_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_zone_confirmation)],
         CREATE_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_confirmation)]
     },
     fallbacks=[CommandHandler("cancel", cancel)]
@@ -1631,6 +2000,431 @@ edit_game_fields_conversation = ConversationHandler(
     fallbacks=[CommandHandler("cancel", cancel_admin_operation)]
 )
 
+# =============================================================================
+# НОВЫЕ ОБРАБОТЧИКИ ДЛЯ НАСТРОЕК ИГРЫ И РУЧНОГО УПРАВЛЕНИЯ
+# =============================================================================
+
+async def game_settings_command(update: Update, context: CallbackContext) -> None:
+    """Обработчик команды настроек игры"""
+    user_id = update.effective_user.id
+    
+    if not UserService.is_admin(user_id):
+        await update.message.reply_text(
+            "У вас нет прав доступа к этой команде.",
+            reply_markup=get_admin_or_main_keyboard(user_id, True)
+        )
+        return
+    
+    settings = GameSettingsService.get_settings()
+    keyboard = get_game_settings_keyboard(settings)
+    
+    mode_text = "🔴 Ручной" if settings.manual_control_mode else "🟢 Автоматический"
+    
+    settings_text = (
+        f"⚙️ <b>Настройки игры</b>\n\n"
+        f"🎮 <b>Режим управления:</b> {mode_text}\n\n"
+        f"📊 <b>Основные настройки:</b>\n"
+        f"• Автостарт игры: {'✅' if settings.auto_start_game else '❌'}\n"
+        f"• Автораспределение ролей: {'✅' if settings.auto_assign_roles else '❌'}\n"
+        f"• Автостарт фазы пряток: {'✅' if settings.auto_start_hiding else '❌'}\n"
+        f"• Автостарт фазы поиска: {'✅' if settings.auto_start_searching else '❌'}\n"
+        f"• Автозавершение игры: {'✅' if settings.auto_end_game else '❌'}\n\n"
+        f"⏱ <b>Временные настройки:</b>\n"
+        f"• Фаза пряток: {settings.hiding_phase_duration} мин\n"
+        f"• Фаза поиска: {settings.searching_phase_duration} мин\n"
+        f"• Мин. участников: {settings.min_participants_to_start}\n\n"
+        f"Выберите раздел для настройки:"
+    )
+    
+    await update.message.reply_text(
+        settings_text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+async def toggle_manual_control(update: Update, context: CallbackContext) -> None:
+    """Переключение режима ручного управления"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    settings = GameSettingsService.get_settings()
+    new_mode = not settings.manual_control_mode
+    
+    success = GameSettingsService.update_settings(manual_control_mode=new_mode)
+    
+    if success:
+        settings = GameSettingsService.get_settings()  # Обновляем данные
+        keyboard = get_game_settings_keyboard(settings)
+        
+        mode_text = "🔴 Ручной" if new_mode else "🟢 Автоматический"
+        action_text = "включен" if new_mode else "выключен"
+        
+        settings_text = (
+            f"⚙️ <b>Настройки игры</b>\n\n"
+            f"🎮 <b>Режим управления:</b> {mode_text}\n"
+            f"✅ Режим ручного управления {action_text}\n\n"
+            f"📊 <b>Основные настройки:</b>\n"
+            f"• Автостарт игры: {'✅' if settings.auto_start_game else '❌'}\n"
+            f"• Автораспределение ролей: {'✅' if settings.auto_assign_roles else '❌'}\n"
+            f"• Автостарт фазы пряток: {'✅' if settings.auto_start_hiding else '❌'}\n"
+            f"• Автостарт фазы поиска: {'✅' if settings.auto_start_searching else '❌'}\n"
+            f"• Автозавершение игры: {'✅' if settings.auto_end_game else '❌'}\n\n"
+            f"⏱ <b>Временные настройки:</b>\n"
+            f"• Фаза пряток: {settings.hiding_phase_duration} мин\n"
+            f"• Фаза поиска: {settings.searching_phase_duration} мин\n"
+            f"• Мин. участников: {settings.min_participants_to_start}\n\n"
+            f"Выберите раздел для настройки:"
+        )
+        
+        await query.edit_message_text(
+            settings_text,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    else:
+        await query.answer("❌ Ошибка при изменении настроек", show_alert=True)
+
+async def automation_settings_button(update: Update, context: CallbackContext) -> None:
+    """Обработчик настроек автоматизации"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    settings = GameSettingsService.get_settings()
+    keyboard = get_automation_settings_keyboard(settings)
+    
+    automation_text = (
+        f"⚙️ <b>Настройки автоматизации</b>\n\n"
+        f"🎮 <b>Автоматические процессы:</b>\n\n"
+        f"{'✅' if settings.auto_start_game else '❌'} <b>Автостарт игры</b>\n"
+        f"Автоматический запуск игры по расписанию\n\n"
+        f"{'✅' if settings.auto_assign_roles else '❌'} <b>Автораспределение ролей</b>\n"
+        f"Автоматическое назначение ролей участникам\n\n"
+        f"{'✅' if settings.auto_start_hiding else '❌'} <b>Автостарт фазы пряток</b>\n"
+        f"Автоматический переход к фазе пряток\n\n"
+        f"{'✅' if settings.auto_start_searching else '❌'} <b>Автостарт фазы поиска</b>\n"
+        f"Автоматический переход к фазе поиска\n\n"
+        f"{'✅' if settings.auto_end_game else '❌'} <b>Автозавершение игры</b>\n"
+        f"Автоматическое завершение игры по времени\n\n"
+        f"💡 <i>Нажмите на настройку для изменения</i>"
+    )
+    
+    await query.edit_message_text(
+        automation_text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+async def toggle_automation_setting(update: Update, context: CallbackContext) -> None:
+    """Переключение настройки автоматизации"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    # Определяем какую настройку переключить
+    setting_map = {
+        "toggle_auto_start_game": "auto_start_game",
+        "toggle_auto_assign_roles": "auto_assign_roles", 
+        "toggle_auto_start_hiding": "auto_start_hiding",
+        "toggle_auto_start_searching": "auto_start_searching",
+        "toggle_auto_end_game": "auto_end_game"
+    }
+    
+    setting_name = setting_map.get(query.data)
+    if not setting_name:
+        return
+    
+    settings = GameSettingsService.get_settings()
+    current_value = getattr(settings, setting_name)
+    new_value = not current_value
+    
+    success = GameSettingsService.update_settings(**{setting_name: new_value})
+    
+    if success:
+        # Обновляем отображение
+        await automation_settings_button(update, context)
+    else:
+        await query.answer("❌ Ошибка при изменении настроек", show_alert=True)
+
+async def manual_control_button(update: Update, context: CallbackContext) -> None:
+    """Обработчик кнопки ручного управления игрой"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    # Извлекаем ID игры
+    match = re.match(r"manual_control_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Получаем информацию о игре для управления
+    control_info = ManualGameControlService.get_game_control_info(game_id)
+    
+    if not control_info["success"]:
+        await query.edit_message_text(
+            f"❌ {control_info['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data=f"admin_game_{game_id}")
+            ]])
+        )
+        return
+    
+    game_info = control_info["game"]
+    participants = control_info["participants"]
+    stats = control_info["statistics"]
+    
+    # Формируем текст с информацией об игре
+    status_emoji = {
+        "recruiting": "📝",
+        "upcoming": "⏰", 
+        "hiding_phase": "🙈",
+        "searching_phase": "🔍",
+        "completed": "✅",
+        "canceled": "❌"
+    }
+    
+    control_text = (
+        f"🎮 <b>Ручное управление игрой #{game_id}</b>\n\n"
+        f"{status_emoji.get(game_info['status'], '❓')} <b>Статус:</b> {game_info['status']}\n"
+        f"📍 <b>Район:</b> {game_info['district']}\n"
+        f"⏰ <b>Время:</b> {datetime.fromisoformat(game_info['scheduled_at']).strftime('%d.%m.%Y %H:%M')}\n"
+        f"👥 <b>Участники:</b> {game_info['participants_count']}/{game_info['max_participants']}\n\n"
+        f"📊 <b>Статистика:</b>\n"
+        f"🚗 Водители: {stats['total_drivers']} (найдено: {stats['found_drivers']})\n"
+        f"🔍 Искатели: {stats['total_seekers']}\n"
+        f"⏳ Осталось найти: {stats['remaining_drivers']}\n\n"
+    )
+    
+    if participants:
+        control_text += "👥 <b>Участники:</b>\n"
+        for p in participants[:5]:  # Показываем первых 5
+            role_emoji = "🚗" if p["role"] == "driver" else "🔍"
+            status_emoji = "✅" if p["is_found"] else "⏳"
+            control_text += f"{role_emoji}{status_emoji} {p['user_name']}\n"
+        
+        if len(participants) > 5:
+            control_text += f"... и еще {len(participants) - 5}\n"
+        control_text += "\n"
+    
+    control_text += "Выберите действие:"
+    
+    keyboard = get_manual_control_keyboard(game_id, game_info["status"], participants)
+    
+    await query.edit_message_text(
+        control_text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+async def manual_assign_roles_button(update: Update, context: CallbackContext) -> None:
+    """Ручное распределение ролей"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"manual_assign_roles_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Используем существующий сервис для распределения ролей
+    roles = GameService.assign_roles(game_id)
+    
+    if roles:
+        await query.edit_message_text(
+            f"✅ <b>Роли успешно распределены!</b>\n\n"
+            f"🎲 Роли назначены {len(roles)} участникам",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Не удалось распределить роли</b>\n\n"
+            f"Возможно, в игре недостаточно участников",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def manual_start_hiding_button(update: Update, context: CallbackContext) -> None:
+    """Ручной запуск фазы пряток"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"manual_start_hiding_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    result = ManualGameControlService.manual_start_hiding_phase(game_id, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>\n\n"
+            f"🙈 Фаза пряток началась!\n"
+            f"⏰ Время начала: {datetime.fromisoformat(result['started_at']).strftime('%H:%M:%S')}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def manual_start_searching_button(update: Update, context: CallbackContext) -> None:
+    """Ручной запуск фазы поиска"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"manual_start_searching_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    result = ManualGameControlService.manual_start_searching_phase(game_id, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>\n\n"
+            f"🔍 Фаза поиска началась!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def manual_end_game_button(update: Update, context: CallbackContext) -> None:
+    """Ручное завершение игры"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"manual_end_game_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    result = ManualGameControlService.manual_end_game(game_id, user_id, "Завершено администратором вручную")
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>\n\n"
+            f"🏁 Игра завершена!\n"
+            f"⏰ Время завершения: {datetime.fromisoformat(result['ended_at']).strftime('%H:%M:%S')}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ К списку игр", callback_data="back_to_admin_games")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def manage_participants_button(update: Update, context: CallbackContext) -> None:
+    """Управление участниками игры"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"manage_participants_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    control_info = ManualGameControlService.get_game_control_info(game_id)
+    
+    if not control_info["success"]:
+        await query.edit_message_text(f"❌ {control_info['error']}")
+        return
+    
+    participants = control_info["participants"]
+    keyboard = get_participants_management_keyboard(game_id, participants)
+    
+    participants_text = (
+        f"👥 <b>Управление участниками игры #{game_id}</b>\n\n"
+        f"Всего участников: {len(participants)}\n\n"
+        f"🚗 - Водитель, 🔍 - Искатель\n"
+        f"✅ - Найден, ⏳ - В игре\n\n"
+        f"Выберите участника для управления:"
+    )
+    
+    await query.edit_message_text(
+        participants_text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+# =============================================================================
+# КОНЕЦ НОВЫХ ОБРАБОТЧИКОВ
+# =============================================================================
 
 # Регистрация обработчиков для админ-функций
 admin_handlers = [
@@ -1646,18 +2440,30 @@ admin_handlers = [
     CallbackQueryHandler(edit_game_inline_button, pattern=ADMIN_EDIT_GAME_PATTERN),
     # Обработчики для редактирования полей игры
     CallbackQueryHandler(edit_district_button, pattern=EDIT_DISTRICT_PATTERN),
-
     CallbackQueryHandler(edit_participants_button, pattern=EDIT_PARTICIPANTS_PATTERN),
     CallbackQueryHandler(edit_drivers_button, pattern=EDIT_DRIVERS_PATTERN),
-
     # Обработчики для применения изменений
     CallbackQueryHandler(set_district_value, pattern=SET_DISTRICT_PATTERN),
     CallbackQueryHandler(set_participants_value, pattern=SET_PARTICIPANTS_PATTERN),
     CallbackQueryHandler(set_drivers_value, pattern=SET_DRIVERS_PATTERN),
-    # Обработчик текстовых сообщений из админ-меню (только для команд, не являющихся ConversationHandler)
+    
+    # Новые обработчики для настроек игры
+    CallbackQueryHandler(toggle_manual_control, pattern="toggle_manual_control"),
+    CallbackQueryHandler(automation_settings_button, pattern="automation_settings"),
+    CallbackQueryHandler(toggle_automation_setting, pattern=r"toggle_auto_(start_game|assign_roles|start_hiding|start_searching|end_game)"),
+    
+    # Новые обработчики для ручного управления игрой
+    CallbackQueryHandler(manual_control_button, pattern=r"manual_control_\d+"),
+    CallbackQueryHandler(manual_assign_roles_button, pattern=r"manual_assign_roles_\d+"),
+    CallbackQueryHandler(manual_start_hiding_button, pattern=r"manual_start_hiding_\d+"),
+    CallbackQueryHandler(manual_start_searching_button, pattern=r"manual_start_searching_\d+"),
+    CallbackQueryHandler(manual_end_game_button, pattern=r"manual_end_game_\d+"),
+    CallbackQueryHandler(manage_participants_button, pattern=r"manage_participants_\d+"),
+    
+    # Обработчик текстовых сообщений из админ-меню (обновлен для поддержки настроек игры)
     MessageHandler(
         filters.TEXT & 
-        filters.Regex(r"^(📋 Список игр|« Назад)$") & 
+        filters.Regex(r"^(📋 Список игр|⚙️ Настройки игры|« Назад)$") & 
         ~filters.COMMAND, 
         handle_admin_text
     )

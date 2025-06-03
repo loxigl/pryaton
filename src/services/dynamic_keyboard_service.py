@@ -95,7 +95,7 @@ class DynamicKeyboardService:
     @staticmethod
     def _get_driver_game_buttons(game) -> List[List[KeyboardButton]]:
         """Кнопки для водителя в зависимости от фазы игры"""
-        if game.status == GameStatus.IN_PROGRESS:
+        if game.status in [GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE]:
             # В процессе игры - водитель может отправлять локацию и фото
             return [
                 [KeyboardButton(text="📍 Отправить локацию"), KeyboardButton(text="📸 Фото места")],
@@ -109,7 +109,7 @@ class DynamicKeyboardService:
     @staticmethod
     def _get_seeker_game_buttons(game) -> List[List[KeyboardButton]]:
         """Кнопки для искателя в зависимости от фазы игры"""
-        if game.status == GameStatus.IN_PROGRESS:
+        if game.status in [GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE]:
             # В процессе игры - искатель может отправлять локацию и фото находки
             return [
                 [KeyboardButton(text="📍 Моя позиция"), KeyboardButton(text="📸 Фото находки")],

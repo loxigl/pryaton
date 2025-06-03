@@ -241,3 +241,14 @@ class EventPersistenceService:
         except Exception as e:
             logger.error(f"Ошибка обновления событий для игры {game_id}: {e}")
             return False 
+    @staticmethod
+    def get_all_events() -> List[ScheduledEvent]:
+        """Получение всех событий"""
+        try:
+            db_generator = get_db()
+            db = next(db_generator)
+            events = db.query(ScheduledEvent).all()
+            return events
+        except Exception as e:
+            logger.error(f"Ошибка получения всех событий: {e}")
+            return []

@@ -21,7 +21,7 @@ async def monitoring_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.warning(f"Отказ в доступе к мониторингу для пользователя {user_id}")
         await update.message.reply_text(
             "❌ Доступ запрещен. Только для администраторов.",
-            reply_markup=get_contextual_main_keyboard(False)
+            reply_markup=get_contextual_main_keyboard(user_id)
         )
         return ConversationHandler.END
     
@@ -48,7 +48,8 @@ async def show_monitoring_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         status_names = {
             'recruiting': '📝 Набор',
             'upcoming': '⏰ Скоро',
-            'in_progress': '🎮 В процессе',
+            'hiding_phase': '🏃 Фаза пряток',
+            'searching_phase': '🔍 Фаза поиска',
             'completed': '✅ Завершены',
             'canceled': '❌ Отменены'
         }
@@ -365,7 +366,7 @@ async def handle_monitoring_callback(update: Update, context: ContextTypes.DEFAU
         await query.message.reply_text(
             "🏠 <b>Главное меню</b>\n\nВыберите действие:",
             parse_mode="HTML",
-            reply_markup=get_contextual_main_keyboard(is_admin)
+            reply_markup=get_contextual_main_keyboard(query.from_user.id)
         )
         return ConversationHandler.END
     else:
@@ -422,7 +423,7 @@ async def handle_monitoring_callback_direct(update: Update, context: ContextType
             await query.message.reply_text(
                 "🏠 <b>Главное меню</b>\n\nВыберите действие:",
                 parse_mode="HTML",
-                reply_markup=get_contextual_main_keyboard(is_admin)
+                reply_markup=get_contextual_main_keyboard(query.from_user.id)
             )
         else:
             logger.warning(f"Неизвестный callback мониторинга: {data}")

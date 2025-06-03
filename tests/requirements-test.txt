@@ -1,0 +1,26 @@
+# Зависимости для тестирования PRYTON v2
+# Основной тестовый фреймворк
+pytest>=7.4.0
+pytest-asyncio>=0.21.1
+pytest-cov>=4.1.0
+
+# Мокирование и имитация
+pytest-mock>=3.11.1
+
+# Асинхронное тестирование
+aioresponses>=0.7.4
+
+# Генерация отчётов
+pytest-html>=3.2.0
+pytest-xdist>=3.3.1
+
+# Дополнительные утилиты для тестирования
+freezegun>=1.2.2
+factory-boy>=3.3.0
+
+# Основные зависимости проекта (если не установлены)
+python-telegram-bot>=20.3
+sqlalchemy>=1.4.0
+apscheduler>=3.10.1
+alembic>=1.11.1
+python-dotenv>=1.0.0 

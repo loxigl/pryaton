@@ -40,7 +40,8 @@ async def show_monitoring_basic(update: Update, context: ContextTypes.DEFAULT_TY
             status_names = {
                 'recruiting': '📝 Набор',
                 'upcoming': '⏰ Скоро',
-                'in_progress': '🎮 В процессе',
+                'hiding_phase': '🏃 Фаза пряток',
+                'searching_phase': '🔍 Фаза поиска',
                 'completed': '✅ Завершены',
                 'canceled': '❌ Отменены'
             }
@@ -156,17 +157,13 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Показываем статус игры для пользователя {user_id}")
         await handle_game_status_button(update, context)
     elif text in ["📸 Фото места", "📸 Фото находки"]:
-        # Обработка кнопок фотографий - пока показываем информацию
-        await update.message.reply_text(
-            "📸 Функция отправки фотографий будет доступна в следующих обновлениях",
-            reply_markup=get_contextual_main_keyboard(user_id)
-        )
+        # Обработка кнопок фотографий - интегрируем с реальной логикой
+        logger.info(f"Обработка кнопки фото для пользователя {user_id}: {text}")
+        await handle_photo_button_action(update, context, text)
     elif text in ["🚗 Меня нашли", "🔍 Я нашел водителя"]:
-        # Обработка кнопок завершения игры - пока показываем информацию
-        await update.message.reply_text(
-            "🏁 Функция завершения игры доступна через inline кнопки в детальной информации об игре",
-            reply_markup=get_contextual_main_keyboard(user_id)
-        )
+        # Обработка кнопок завершения игры - интегрируем с реальной логикой
+        logger.info(f"Обработка кнопки завершения для пользователя {user_id}: {text}")
+        await handle_game_completion_button_action(update, context, text)
     elif text == "⚠️ Нужна помощь":
         # Обработка кнопки помощи в игре
         await show_game_help(update, context)
@@ -277,7 +274,7 @@ async def show_game_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if role == 'driver':
             role_help = (
                 "🚗 <b>Советы для водителя:</b>\n"
-                "• Найдите укромное место для прятки\n"
+                "• Найдите укромное место для пряток\n"
                 "• Отправляйте геолокацию для подтверждения\n"
                 "• Делайте фото места для подтверждения\n"
                 "• Будьте осторожны, искатели уже ищут!\n\n"
@@ -334,6 +331,218 @@ def get_role_text(role) -> str:
         'observer': '👁 Наблюдатель'
     }
     return role_texts.get(role.value if hasattr(role, 'value') else str(role), str(role))
+
+async def handle_photo_button_action(update: Update, context: ContextTypes.DEFAULT_TYPE, button_text: str) -> None:
+    """Обработка кнопок фотографий"""
+    user_id = update.effective_user.id
+    
+    try:
+        from src.services.user_context_service import UserContextService
+        game_context = UserContextService.get_user_game_context(user_id)
+        
+        if game_context.status != UserContextService.STATUS_IN_GAME:
+            await update.message.reply_text(
+                "📸 Отправка фотографий доступна только во время активной игры",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+            return
+        
+        game = game_context.game
+        participant = game_context.participant
+        
+        if not participant or not participant.role:
+            await update.message.reply_text(
+                "❌ Не удалось определить вашу роль в игре",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+            return
+        
+        role = participant.role.value
+        
+        if button_text == "📸 Фото места" and role == 'driver':
+            photo_text = (
+                f"📸 <b>Отправка фото места - Водитель</b>\n\n"
+                f"🎮 <b>Игра:</b> {game.district}\n\n"
+                f"🚗 <b>Инструкции:</b>\n"
+                f"• Сделайте фото своего места пряток\n"
+                f"• Фото должно показывать машину и окружение\n"
+                f"• Это поможет искателям вас найти\n\n"
+                f"📱 Просто сделайте фото и отправьте его в этот чат"
+            )
+        elif button_text == "📸 Фото находки" and role == 'seeker':
+            photo_text = (
+                f"📸 <b>Отправка фото находки - Искатель</b>\n\n"
+                f"🎮 <b>Игра:</b> {game.district}\n\n"
+                f"🔍 <b>Инструкции:</b>\n"
+                f"• Сделайте фото найденной машины\n"
+                f"• Фото должно четко показывать машину\n"
+                f"• Водитель должен подтвердить находку\n\n"
+                f"📱 Просто сделайте фото и отправьте его в этот чат"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Кнопка '{button_text}' недоступна для вашей роли",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+            return
+        
+        await update.message.reply_text(
+            photo_text,
+            parse_mode="HTML",
+            reply_markup=get_contextual_main_keyboard(user_id)
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке кнопки фото для пользователя {user_id}: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке запроса",
+            reply_markup=get_contextual_main_keyboard(user_id)
+        )
+
+async def handle_game_completion_button_action(update: Update, context: ContextTypes.DEFAULT_TYPE, button_text: str) -> None:
+    """Обработка кнопок завершения игры"""
+    user_id = update.effective_user.id
+    
+    try:
+        from src.services.user_context_service import UserContextService
+        game_context = UserContextService.get_user_game_context(user_id)
+        
+        if game_context.status != UserContextService.STATUS_IN_GAME:
+            await update.message.reply_text(
+                "🏁 Завершение игры доступно только во время активной игры",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+            return
+        
+        game = game_context.game
+        participant = game_context.participant
+        
+        if not participant or not participant.role:
+            await update.message.reply_text(
+                "❌ Не удалось определить вашу роль в игре",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+            return
+        
+        role = participant.role.value
+        
+        if button_text == "🚗 Меня нашли" and role == 'driver':
+            # Водитель подтверждает находку
+            from src.services.game_service import GameService
+            
+            success = GameService.mark_participant_found(game.id, participant.user_id)
+            if success:
+                await update.message.reply_text(
+                    f"🎉 <b>Находка подтверждена!</b>\n\n"
+                    f"Вы отметили, что вас нашли в игре {game.district}.\n"
+                    f"Все участники получат уведомление.\n\n"
+                    f"Игра для вас завершена. Спасибо за участие!",
+                    parse_mode="HTML",
+                    reply_markup=get_contextual_main_keyboard(user_id)
+                )
+                
+                # Уведомляем других участников
+                await notify_participants_about_found_driver(context, game.id, participant.user.name)
+                
+                # Проверяем завершение игры
+                from src.handlers.callback_handler import check_game_completion_callback
+                await check_game_completion_callback(context, game.id)
+            else:
+                await update.message.reply_text(
+                    "❌ Не удалось отметить находку. Попробуйте еще раз.",
+                    reply_markup=get_contextual_main_keyboard(user_id)
+                )
+        
+        elif button_text == "🔍 Я нашел водителя" and role == 'seeker':
+            # Искатель сообщает о находке
+            await update.message.reply_text(
+                f"🔍 <b>Сообщение о находке отправлено!</b>\n\n"
+                f"Вы сообщили, что нашли водителя в игре {game.district}.\n"
+                f"Водители получат уведомление.\n\n"
+                f"Ожидайте подтверждения от водителя.",
+                parse_mode="HTML",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+            
+            # Уведомляем водителей
+            await notify_drivers_about_found(context, game.id, participant.user.name)
+        
+        else:
+            await update.message.reply_text(
+                f"❌ Кнопка '{button_text}' недоступна для вашей роли",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке кнопки завершения для пользователя {user_id}: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке запроса",
+            reply_markup=get_contextual_main_keyboard(user_id)
+        )
+
+async def notify_drivers_about_found(context: ContextTypes.DEFAULT_TYPE, game_id: int, seeker_name: str) -> None:
+    """Уведомление водителей о том, что их нашли"""
+    try:
+        from src.services.game_service import GameService
+        from src.services.user_service import UserService
+        
+        game = GameService.get_game_by_id(game_id)
+        if not game or game.status not in [GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE]:
+            return
+        
+        # Находим всех водителей в игре
+        for participant in game.participants:
+            if participant.role and participant.role.value == 'driver' and not participant.is_found:
+                user, _ = UserService.get_user_by_id(participant.user_id)
+                if user:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=user.telegram_id,
+                            text=(
+                                f"🔍 <b>Вас нашли!</b>\n\n"
+                                f"🎮 <b>Игра:</b> {game.district}\n"
+                                f"👤 <b>Нашел:</b> {seeker_name}\n\n"
+                                f"Если это правда, нажмите кнопку '🚗 Меня нашли' для подтверждения."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки уведомления водителю {user.telegram_id}: {e}")
+                        
+    except Exception as e:
+        logger.error(f"Ошибка уведомления водителей: {e}")
+
+async def notify_participants_about_found_driver(context: ContextTypes.DEFAULT_TYPE, game_id: int, driver_name: str) -> None:
+    """Уведомление участников о найденном водителе"""
+    try:
+        from src.services.game_service import GameService
+        from src.services.user_service import UserService
+        from src.models.game import GameStatus
+        
+        game = GameService.get_game_by_id(game_id)
+        if not game or game.status not in [GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE]:
+            return
+        
+        # Уведомляем всех участников кроме найденного водителя
+        for participant in game.participants:
+            user, _ = UserService.get_user_by_id(participant.user_id)
+            if user and user.name != driver_name:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user.telegram_id,
+                        text=(
+                            f"🎉 <b>Водитель найден!</b>\n\n"
+                            f"🎮 <b>Игра:</b> {game.district}\n"
+                            f"🚗 <b>Найден:</b> {driver_name}\n\n"
+                            f"Игра продолжается - ищите других водителей!"
+                        ),
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка отправки уведомления участнику {user.telegram_id}: {e}")
+                    
+    except Exception as e:
+        logger.error(f"Ошибка уведомления участников: {e}")
 
 # Обработчик всех текстовых сообщений
 text_message_handler = MessageHandler(

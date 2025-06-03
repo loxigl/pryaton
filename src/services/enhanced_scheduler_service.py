@@ -6,6 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from loguru import logger
 from telegram.ext import Application
+import pytz
 
 from src.models.base import get_db
 from src.models.game import Game, GameStatus, GameParticipant, GameRole
@@ -14,19 +15,25 @@ from src.services.user_service import UserService
 from src.services.game_service import GameService
 from src.services.event_persistence_service import EventPersistenceService
 
+# Определяем временную зону (по умолчанию московское время)
+DEFAULT_TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Europe/Moscow"))
 
 class EnhancedSchedulerService:
     """Улучшенный сервис планировщика с персистентными событиями"""
     
     def __init__(self, application: Application):
-        self.scheduler = AsyncIOScheduler()
+        # Инициализируем планировщик с правильной временной зоной
+        self.scheduler = AsyncIOScheduler(timezone=DEFAULT_TIMEZONE)
         self.application = application
         self.bot = application.bot
         
         # Настройки из переменных окружения
         self.hiding_time = int(os.getenv("HIDING_TIME", 30))  # минуты
         self.reminder_times = [int(x) for x in os.getenv("REMINDER_BEFORE_GAME", "60,24,5").split(",")]  # минуты
+        self.hiding_warning_time = int(os.getenv("HIDING_WARNING_TIME", 5))  # за сколько минут предупреждать о конце пряток
         
+        logger.info(f"Планировщик инициализирован с временной зоной: {DEFAULT_TIMEZONE}")
+    
     def start(self):
         """Запуск планировщика с восстановлением событий"""
         if not self.scheduler.running:
@@ -43,30 +50,38 @@ class EnhancedSchedulerService:
             logger.info("Планировщик задач остановлен")
     
     def _restore_events_from_db(self):
-        """Восстановление всех невыполненных событий из БД"""
+        """Восстановление всех незавершенных событий из базы данных"""
         try:
-            pending_events = EventPersistenceService.get_pending_events()
+            events = EventPersistenceService.get_pending_events()
             restored_count = 0
             
-            for event in pending_events:
-                # Проверяем, что событие еще актуально
-                if event.scheduled_at > datetime.now():
-                    success = self._schedule_event_from_db(event)
-                    if success:
-                        restored_count += 1
-                else:
-                    # Событие просрочено - отмечаем как выполненное
-                    EventPersistenceService.mark_event_executed(event.id)
-                    logger.warning(f"Просроченное событие отмечено как выполненное: {event}")
+            for event in events:
+                # Проверяем, не просрочено ли событие
+                if event.is_overdue:
+                    logger.warning(f"Событие {event.id} просрочено, пропускаем: {event}")
+                    continue
+                
+                # Планируем событие
+                if self._schedule_event_from_db(event):
+                    restored_count += 1
             
-            logger.info(f"Восстановлено {restored_count} событий из БД")
+            logger.info(f"Восстановлено {restored_count} событий из {len(events)} найденных")
             
         except Exception as e:
-            logger.error(f"Ошибка восстановления событий из БД: {e}")
+            logger.error(f"Ошибка восстановления событий: {e}")
     
     def _schedule_event_from_db(self, event: ScheduledEvent) -> bool:
         """Планирование события из БД"""
         try:
+            # Убеждаемся, что время события имеет правильную временную зону
+            scheduled_time = event.scheduled_at
+            if scheduled_time.tzinfo is None:
+                # Если timezone не указан, считаем что это московское время
+                scheduled_time = DEFAULT_TIMEZONE.localize(scheduled_time)
+            elif scheduled_time.tzinfo != DEFAULT_TIMEZONE:
+                # Конвертируем в нашу временную зону
+                scheduled_time = scheduled_time.astimezone(DEFAULT_TIMEZONE)
+            
             # Определяем функцию для выполнения
             if event.event_type.startswith("reminder_"):
                 minutes = int(event.event_type.split("_")[1].replace("min", "").replace("hour", ""))
@@ -80,6 +95,9 @@ class EnhancedSchedulerService:
             elif event.event_type == "hiding_phase_end":
                 func = self.end_hiding_phase
                 args = [event.game_id, event.id]
+            elif event.event_type == "hiding_warning":
+                func = self.send_hiding_warning
+                args = [event.game_id, event.id]
             elif event.event_type == "search_phase_end":
                 func = self.end_search_phase
                 args = [event.game_id, event.id]
@@ -90,16 +108,16 @@ class EnhancedSchedulerService:
                 logger.warning(f"Неизвестный тип события: {event.event_type}")
                 return False
             
-            # Планируем событие
+            # Планируем событие с правильным временем
             self.scheduler.add_job(
                 func,
-                trigger=DateTrigger(run_date=event.scheduled_at),
+                trigger=DateTrigger(run_date=scheduled_time),
                 args=args,
                 id=event.job_id,
                 replace_existing=True
             )
             
-            logger.debug(f"Восстановлено событие: {event}")
+            logger.debug(f"Восстановлено событие: {event.job_id} на {scheduled_time}")
             return True
             
         except Exception as e:
@@ -113,12 +131,22 @@ class EnhancedSchedulerService:
             logger.error(f"Игра {game_id} не найдена при планировании напоминаний")
             return
         
+        # Убеждаемся, что время игры имеет правильную временную зону
+        game_time = game.scheduled_at
+        if game_time.tzinfo is None:
+            game_time = DEFAULT_TIMEZONE.localize(game_time)
+        elif game_time.tzinfo != DEFAULT_TIMEZONE:
+            game_time = game_time.astimezone(DEFAULT_TIMEZONE)
+        
+        # Получаем текущее время в правильной временной зоне
+        current_time = datetime.now(DEFAULT_TIMEZONE)
+        
         # Планируем напоминания
         for reminder_minutes in self.reminder_times:
-            reminder_time = game.scheduled_at - timedelta(minutes=reminder_minutes)
+            reminder_time = game_time - timedelta(minutes=reminder_minutes)
             
             # Проверяем, что время напоминания еще не прошло
-            if reminder_time > datetime.now():
+            if reminder_time > current_time:
                 # Определяем тип события
                 if reminder_minutes >= 60:
                     event_type = f"reminder_{reminder_minutes // 60}hour"
@@ -129,7 +157,7 @@ class EnhancedSchedulerService:
                 event = EventPersistenceService.save_event(
                     game_id=game_id,
                     event_type=event_type,
-                    scheduled_at=reminder_time,
+                    scheduled_at=reminder_time.replace(tzinfo=None),  # Убираем timezone для БД
                     event_data={"minutes_before": reminder_minutes}
                 )
                 
@@ -144,65 +172,132 @@ class EnhancedSchedulerService:
                     )
                     
                     logger.info(f"Запланировано напоминание для игры {game_id} за {reminder_minutes} минут: {reminder_time}")
+            else:
+                logger.debug(f"Напоминание за {reminder_minutes} минут для игры {game_id} пропущено (время уже прошло)")
         
-        # Планируем начало игры
-        start_event = EventPersistenceService.save_event(
-            game_id=game_id,
-            event_type="game_start",
-            scheduled_at=game.scheduled_at,
-            event_data={}
-        )
-        
-        if start_event:
-            self.scheduler.add_job(
-                self.start_game,
-                trigger=DateTrigger(run_date=game.scheduled_at),
-                args=[game_id, start_event.id],
-                id=start_event.job_id,
-                replace_existing=True
+        # Планируем начало игры (фазу пряток)
+        if game_time > current_time:
+            start_event = EventPersistenceService.save_event(
+                game_id=game_id,
+                event_type="game_start",
+                scheduled_at=game_time.replace(tzinfo=None),  # Убираем timezone для БД
+                event_data={}
             )
             
-            logger.info(f"Запланирован автоматический старт игры {game_id}: {game.scheduled_at}")
+            if start_event:
+                self.scheduler.add_job(
+                    self.start_game,
+                    trigger=DateTrigger(run_date=game_time),
+                    args=[game_id, start_event.id],
+                    id=start_event.job_id,
+                    replace_existing=True
+                )
+                
+                logger.info(f"Запланирован автоматический старт игры {game_id}: {game_time}")
         
-        # Планируем таймер прятки после начала игры
-        hiding_end_time = game.scheduled_at + timedelta(minutes=self.hiding_time)
-        hiding_event = EventPersistenceService.save_event(
-            game_id=game_id,
-            event_type="hiding_phase_end",
-            scheduled_at=hiding_end_time,
-            event_data={"hiding_time": self.hiding_time}
-        )
-        
-        if hiding_event:
-            self.scheduler.add_job(
-                self.end_hiding_phase,
-                trigger=DateTrigger(run_date=hiding_end_time),
-                args=[game_id, hiding_event.id],
-                id=hiding_event.job_id,
-                replace_existing=True
+        # Планируем предупреждение за 5 минут до конца пряток
+        hiding_warning_time = game_time + timedelta(minutes=self.hiding_time - self.hiding_warning_time)
+        if hiding_warning_time > current_time:
+            warning_event = EventPersistenceService.save_event(
+                game_id=game_id,
+                event_type="hiding_warning",
+                scheduled_at=hiding_warning_time.replace(tzinfo=None),
+                event_data={"warning_minutes": self.hiding_warning_time}
             )
             
-            logger.info(f"Запланировано окончание прятки для игры {game_id}: {hiding_end_time}")
-    
+            if warning_event:
+                self.scheduler.add_job(
+                    self.send_hiding_warning,
+                    trigger=DateTrigger(run_date=hiding_warning_time),
+                    args=[game_id, warning_event.id],
+                    id=warning_event.job_id,
+                    replace_existing=True
+                )
+                
+                logger.info(f"Запланировано предупреждение о конце пряток для игры {game_id}: {hiding_warning_time}")
+        
+        # Планируем окончание фазы пряток (начало поиска)
+        hiding_end_time = game_time + timedelta(minutes=self.hiding_time)
+        if hiding_end_time > current_time:
+            hiding_event = EventPersistenceService.save_event(
+                game_id=game_id,
+                event_type="hiding_phase_end",
+                scheduled_at=hiding_end_time.replace(tzinfo=None),  # Убираем timezone для БД
+                event_data={"hiding_time": self.hiding_time}
+            )
+            
+            if hiding_event:
+                self.scheduler.add_job(
+                    self.end_hiding_phase,
+                    trigger=DateTrigger(run_date=hiding_end_time),
+                    args=[game_id, hiding_event.id],
+                    id=hiding_event.job_id,
+                    replace_existing=True
+                )
+                
+                logger.info(f"Запланировано окончание пряток для игры {game_id}: {hiding_end_time}")
+
     def cancel_game_jobs(self, game_id: int):
         """Отмена всех задач для игры"""
-        # Отменяем в БД
-        cancelled_count = EventPersistenceService.cancel_game_events(game_id)
-        
-        # Отменяем в планировщике
         jobs_to_remove = []
+        
+        # Находим все задачи для данной игры
         for job in self.scheduler.get_jobs():
             if str(game_id) in job.id:
                 jobs_to_remove.append(job.id)
         
+        # Удаляем задачи из планировщика
         for job_id in jobs_to_remove:
             try:
                 self.scheduler.remove_job(job_id)
-                logger.debug(f"Отменена задача планировщика {job_id}")
+                logger.info(f"Отменена задача {job_id} для игры {game_id}")
             except Exception as e:
-                logger.warning(f"Ошибка отмены задачи {job_id}: {e}")
+                logger.error(f"Ошибка отмены задачи {job_id}: {e}")
         
-        logger.info(f"Отменено {cancelled_count} событий для игры {game_id}")
+        # Помечаем события в БД как отмененные
+        try:
+            EventPersistenceService.cancel_game_events(game_id)
+        except Exception as e:
+            logger.error(f"Ошибка отмены событий в БД для игры {game_id}: {e}")
+    
+    def get_scheduled_events_info(self) -> dict:
+        """Получение информации о запланированных событиях"""
+        try:
+            # Получаем события из БД
+            all_events = EventPersistenceService.get_all_events()
+            pending_events = EventPersistenceService.get_pending_events()
+            
+            # Группируем по играм
+            events_by_game = {}
+            for event in pending_events:
+                if event.game_id not in events_by_game:
+                    events_by_game[event.game_id] = []
+                events_by_game[event.game_id].append(event)
+            
+            # Статистика
+            stats = {
+                'total': len(all_events),
+                'pending': len(pending_events),
+                'executed': len([e for e in all_events if e.is_executed]),
+                'overdue': len([e for e in all_events if e.is_overdue])
+            }
+            
+            # Количество задач в планировщике
+            scheduler_jobs_count = len(self.scheduler.get_jobs())
+            
+            return {
+                'events_by_game': events_by_game,
+                'statistics': stats,
+                'scheduler_jobs': scheduler_jobs_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения информации о событиях: {e}")
+            return {
+                'events_by_game': {},
+                'statistics': {'total': 0, 'pending': 0, 'executed': 0, 'overdue': 0},
+                'scheduler_jobs': 0
+            }
     
     async def send_game_reminder(self, game_id: int, minutes_before: int, event_id: int):
         """Отправка напоминания о предстоящей игре"""
@@ -251,7 +346,7 @@ class EnhancedSchedulerService:
             logger.error(f"Ошибка отправки напоминаний для игры {game_id}: {e}")
     
     async def start_game(self, game_id: int, event_id: int, start_type: str = "auto"):
-        """Запуск игры с уведомлениями"""
+        """Запуск игры с уведомлениями - начинает фазу пряток"""
         try:
             # Отмечаем событие как выполненное
             EventPersistenceService.mark_event_executed(event_id)
@@ -275,43 +370,143 @@ class EnhancedSchedulerService:
             # Распределяем роли
             GameService.assign_roles(game_id)
             
-            # Запускаем игру
+            # Запускаем игру (переводим в фазу пряток)
             if GameService._start_game_internal(game_id):
                 await self.notify_game_started(game_id, start_type)
-                logger.info(f"Игра {game_id} запущена ({start_type})")
+                logger.info(f"Игра {game_id} запущена - фаза пряток началась ({start_type})")
             else:
                 logger.error(f"Ошибка запуска игры {game_id}")
                 
         except Exception as e:
             logger.error(f"Ошибка запуска игры {game_id}: {e}")
     
-    async def end_hiding_phase(self, game_id: int, event_id: int):
-        """Завершение фазы прятки"""
+    async def send_hiding_warning(self, game_id: int, event_id: int):
+        """Отправка предупреждения за 5 минут до конца пряток"""
         try:
             # Отмечаем событие как выполненное
             EventPersistenceService.mark_event_executed(event_id)
             
             game = GameService.get_game_by_id(game_id)
-            if not game or game.status != GameStatus.IN_PROGRESS:
-                logger.info(f"Игра {game_id} не активна, пропускаем завершение прятки")
+            if not game or game.status != GameStatus.HIDING_PHASE:
+                logger.info(f"Игра {game_id} не в фазе пряток, пропускаем предупреждение")
                 return
             
+            # Получаем статистику не спрятавшихся водителей
+            hiding_stats = GameService.get_hiding_stats(game_id)
+            not_hidden_drivers = hiding_stats['not_hidden_drivers']
+            
+            if not_hidden_drivers:
+                # Уведомляем не спрятавшихся водителей
+                warning_text = (
+                    f"⚠️ <b>Внимание! Осталось {self.hiding_warning_time} минут до конца пряток!</b>\n\n"
+                    f"🎮 <b>Игра:</b> {game.district}\n\n"
+                    f"🚗 Вы еще не отправили фото места пряток!\n"
+                    f"📸 Срочно отправьте фотографию, иначе вы будете дисквалифицированы."
+                )
+                
+                for driver in not_hidden_drivers:
+                    user, _ = UserService.get_user_by_id(driver.user_id)
+                    if user:
+                        try:
+                            await self.bot.send_message(
+                                chat_id=user.telegram_id,
+                                text=warning_text,
+                                parse_mode="HTML"
+                            )
+                        except Exception as e:
+                            logger.error(f"Ошибка отправки предупреждения водителю {user.telegram_id}: {e}")
+                
+                # Уведомляем админов о статистике
+                await self.notify_admins_hiding_stats(game_id, not_hidden_drivers)
+                
+                logger.info(f"Отправлены предупреждения {len(not_hidden_drivers)} не спрятавшимся водителям в игре {game_id}")
+            else:
+                logger.info(f"Все водители спрятались в игре {game_id}, предупреждения не нужны")
+            
+        except Exception as e:
+            logger.error(f"Ошибка отправки предупреждений о конце пряток для игры {game_id}: {e}")
+    
+    async def notify_admins_hiding_stats(self, game_id: int, not_hidden_drivers: List):
+        """Уведомление админов о статистике пряток"""
+        try:
+            admins = UserService.get_admin_users()
+            if not admins:
+                return
+            
+            game = GameService.get_game_by_id(game_id)
+            if not game:
+                return
+            
+            hiding_stats = GameService.get_hiding_stats(game_id)
+            
+            if not_hidden_drivers:
+                not_hidden_names = []
+                for driver in not_hidden_drivers:
+                    user, _ = UserService.get_user_by_id(driver.user_id)
+                    name = user.name if user else f"ID {driver.user_id}"
+                    not_hidden_names.append(name)
+                
+                stats_text = (
+                    f"⚠️ <b>Статистика пряток #{game_id}</b>\n\n"
+                    f"🎮 <b>Игра:</b> {game.district}\n"
+                    f"⏰ <b>Осталось времени:</b> {self.hiding_warning_time} минут\n\n"
+                    f"🚗 <b>Водители:</b> {hiding_stats['total_drivers']}\n"
+                    f"✅ Спрятались: {hiding_stats['hidden_count']}\n"
+                    f"⚠️ НЕ спрятались: {hiding_stats['not_hidden_count']}\n\n"
+                    f"<b>Не спрятавшиеся водители:</b>\n" +
+                    "\n".join(f"• {name}" for name in not_hidden_names)
+                )
+            else:
+                stats_text = (
+                    f"✅ <b>Все водители спрятались! #{game_id}</b>\n\n"
+                    f"🎮 <b>Игра:</b> {game.district}\n"
+                    f"🚗 <b>Водители:</b> {hiding_stats['total_drivers']}\n"
+                    f"⏰ <b>Осталось времени:</b> {self.hiding_warning_time} минут"
+                )
+            
+            for admin in admins:
+                try:
+                    await self.bot.send_message(
+                        chat_id=admin.telegram_id,
+                        text=stats_text,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка отправки статистики админу {admin.telegram_id}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Ошибка уведомления админов о статистике: {e}")
+    
+    async def end_hiding_phase(self, game_id: int, event_id: int):
+        """Завершение фазы прятки - переход к фазе поиска"""
+        try:
+            # Отмечаем событие как выполненное
+            EventPersistenceService.mark_event_executed(event_id)
+            
+            game = GameService.get_game_by_id(game_id)
+            if not game or game.status != GameStatus.HIDING_PHASE:
+                logger.info(f"Игра {game_id} не в фазе пряток, пропускаем завершение прятки")
+                return
+            
+            # Переводим игру в фазу поиска
+            GameService.start_searching_phase(game_id)
+            
             hiding_end_text = (
-                f"⏰ <b>Время прятки истекло!</b>\n\n"
+                f"⏰ <b>Время пряток истекло!</b>\n\n"
                 f"🎮 <b>Игра:</b> {game.district}\n"
                 f"🏁 <b>Фаза поиска началась!</b>\n\n"
             )
             
             # Уведомляем водителей
             drivers_text = hiding_end_text + (
-                f"🚗 <b>Водители:</b> Время прятки закончилось!\n"
+                f"🚗 <b>Водители:</b> Время пряток закончилось!\n"
                 f"Теперь вас могут искать. Удачи!"
             )
             
             # Уведомляем искателей
             seekers_text = hiding_end_text + (
                 f"🔍 <b>Искатели:</b> Начинайте поиск!\n"
-                f"Отправляйте фотографии найденных машин в бот для подтверждения."
+                f"📸 Отправляйте фотографии найденных машин с указанием водителя."
             )
             
             sent_count = 0
@@ -331,12 +526,12 @@ class EnhancedSchedulerService:
                         )
                         sent_count += 1
                     except Exception as e:
-                        logger.error(f"Ошибка уведомления об окончании прятки пользователю {user.telegram_id}: {e}")
+                        logger.error(f"Ошибка уведомления об окончании пряток пользователю {user.telegram_id}: {e}")
             
-            logger.info(f"Завершена фаза прятки для игры {game_id} ({sent_count} уведомлений)")
+            logger.info(f"Завершена фаза пряток для игры {game_id}, начата фаза поиска ({sent_count} уведомлений)")
             
         except Exception as e:
-            logger.error(f"Ошибка завершения фазы прятки для игры {game_id}: {e}")
+            logger.error(f"Ошибка завершения фазы пряток для игры {game_id}: {e}")
     
     async def end_search_phase(self, game_id: int, event_id: int):
         """Завершение фазы поиска (автоматическое завершение игры)"""
@@ -345,8 +540,8 @@ class EnhancedSchedulerService:
             EventPersistenceService.mark_event_executed(event_id)
             
             game = GameService.get_game_by_id(game_id)
-            if not game or game.status != GameStatus.IN_PROGRESS:
-                logger.info(f"Игра {game_id} не активна, пропускаем завершение поиска")
+            if not game or game.status != GameStatus.SEARCHING_PHASE:
+                logger.info(f"Игра {game_id} не в фазе поиска, пропускаем завершение поиска")
                 return
             
             # Завершаем игру принудительно
@@ -370,7 +565,7 @@ class EnhancedSchedulerService:
             logger.error(f"Ошибка очистки данных игры {game_id}: {e}")
     
     async def notify_game_started(self, game_id: int, start_type: str = "auto"):
-        """Уведомление о начале игры с указанием типа запуска"""
+        """Уведомление о начале фазы пряток"""
         try:
             game = GameService.get_game_by_id(game_id)
             if not game:
@@ -389,22 +584,25 @@ class EnhancedSchedulerService:
             start_text += (
                 f"🎮 <b>Игра:</b> {game.district}\n"
                 f"⏰ <b>Время начала:</b> {datetime.now().strftime('%H:%M')}\n\n"
+                f"🏁 <b>Фаза пряток началась!</b>\n\n"
             )
             
             # Уведомляем водителей
             drivers_text = start_text + (
                 f"🚗 <b>Ваша роль: Водитель</b>\n\n"
                 f"У вас есть {self.hiding_time} минут на то, чтобы спрятаться!\n"
-                f"📍 Отправьте геолокацию когда будете готовы.\n"
-                f"📸 Можете отправить фото места прятки для администрации."
+                f"📸 <b>ОБЯЗАТЕЛЬНО отправьте фото места пряток в бот!</b>\n"
+                f"📍 Можете также отправить геолокацию.\n\n"
+                f"⚠️ За {self.hiding_warning_time} минут до конца получите предупреждение."
             )
             
             # Уведомляем искателей
             seekers_text = start_text + (
                 f"🔍 <b>Ваша роль: Искатель</b>\n\n"
                 f"Водители прячутся {self.hiding_time} минут.\n"
-                f"📍 Отправляйте геолокацию для отслеживания.\n"
-                f"⏰ Поиск начнется через {self.hiding_time} минут!"
+                f"📍 Можете отправлять геолокацию для отслеживания.\n"
+                f"⏰ Поиск начнется через {self.hiding_time} минут!\n\n"
+                f"Когда начнется поиск, фотографируйте найденные машины."
             )
             
             sent_count = 0
@@ -465,6 +663,100 @@ class EnhancedSchedulerService:
         except Exception as e:
             logger.error(f"Ошибка уведомления об отмене игры {game_id}: {e}")
     
+    async def notify_searching_phase_started(self, game_id: int):
+        """Уведомление о начале фазы поиска"""
+        try:
+            game = GameService.get_game_by_id(game_id)
+            if not game:
+                return
+            
+            # Проверяем, все ли водители спрятались
+            hiding_stats = GameService.get_hiding_stats(game_id)
+            all_hidden = hiding_stats.get('all_hidden', False)
+            
+            # Формируем текст уведомления
+            if all_hidden:
+                phase_text = (
+                    f"🔍 <b>Фаза поиска началась!</b>\n\n"
+                    f"🎮 <b>Игра:</b> {game.district}\n"
+                    f"⏰ <b>Время:</b> {datetime.now().strftime('%H:%M')}\n\n"
+                    f"✅ <b>Все водители спрятались!</b>\n"
+                    f"🚗 Водителей: {hiding_stats['total_drivers']}\n\n"
+                )
+            else:
+                not_hidden_count = hiding_stats.get('not_hidden_count', 0)
+                phase_text = (
+                    f"🔍 <b>Фаза поиска началась!</b>\n\n"
+                    f"🎮 <b>Игра:</b> {game.district}\n"
+                    f"⏰ <b>Время:</b> {datetime.now().strftime('%H:%M')}\n\n"
+                    f"⚠️ <b>Внимание!</b> {not_hidden_count} водителей не успели спрятаться.\n\n"
+                )
+            
+            # Разные тексты для водителей и искателей
+            drivers_text = phase_text + (
+                f"🚗 <b>Инструкции для водителей:</b>\n"
+                f"• Оставайтесь в своем месте пряток\n"
+                f"• Подтверждайте находку кнопкой 'Меня нашли'\n"
+                f"• Можете отправлять дополнительные фото\n\n"
+                f"Удачной игры! Пусть вас не найдут 😉"
+            )
+            
+            seekers_text = phase_text + (
+                f"🔍 <b>Инструкции для искателей:</b>\n"
+                f"• Ищите спрятанные машины\n"
+                f"• Отправляйте фото найденных машин\n"
+                f"• Используйте кнопку 'Я нашел водителя'\n"
+                f"• Координируйтесь с другими искателями\n\n"
+                f"Удачной охоты! 🕵️‍♂️"
+            )
+            
+            # Отправляем уведомления участникам
+            sent_count = 0
+            for participant in game.participants:
+                user, _ = UserService.get_user_by_id(participant.user_id)
+                if user:
+                    try:
+                        if participant.role == GameRole.DRIVER:
+                            text = drivers_text
+                        else:
+                            text = seekers_text
+                        
+                        await self.bot.send_message(
+                            chat_id=user.telegram_id,
+                            text=text,
+                            parse_mode="HTML"
+                        )
+                        sent_count += 1
+                    except Exception as e:
+                        logger.error(f"Ошибка уведомления о начале поиска пользователю {user.telegram_id}: {e}")
+            
+            # Уведомляем админов
+            admins = UserService.get_admin_users()
+            for admin in admins:
+                try:
+                    admin_text = (
+                        f"👨‍💼 <b>Админ-уведомление: Началась фаза поиска</b>\n\n"
+                        f"🎮 <b>Игра:</b> {game.district} (ID: {game.id})\n"
+                        f"⏰ <b>Время:</b> {datetime.now().strftime('%H:%M')}\n"
+                        f"🚗 <b>Водителей:</b> {hiding_stats['total_drivers']}\n"
+                        f"✅ <b>Спрятались:</b> {hiding_stats['hidden_count']}\n"
+                        f"❌ <b>Не спрятались:</b> {hiding_stats['not_hidden_count']}\n\n"
+                        f"📊 Отправлено уведомлений: {sent_count}"
+                    )
+                    
+                    await self.bot.send_message(
+                        chat_id=admin.telegram_id,
+                        text=admin_text,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка уведомления админа {admin.telegram_id} о начале поиска: {e}")
+            
+            logger.info(f"Отправлены уведомления о начале фазы поиска для игры {game_id} ({sent_count} участников)")
+            
+        except Exception as e:
+            logger.error(f"Ошибка уведомления о начале фазы поиска для игры {game_id}: {e}")
+    
     async def notify_game_ended(self, game_id: int, reason: str):
         """Уведомление о завершении игры"""
         try:
@@ -498,32 +790,6 @@ class EnhancedSchedulerService:
             
         except Exception as e:
             logger.error(f"Ошибка уведомления о завершении игры {game_id}: {e}")
-    
-    def get_scheduled_events_info(self, game_id: Optional[int] = None) -> dict:
-        """Получение информации о запланированных событиях"""
-        try:
-            if game_id:
-                events = EventPersistenceService.get_game_events(game_id)
-            else:
-                events = EventPersistenceService.get_pending_events()
-            
-            events_by_game = {}
-            for event in events:
-                if event.game_id not in events_by_game:
-                    events_by_game[event.game_id] = []
-                events_by_game[event.game_id].append(event)
-            
-            stats = EventPersistenceService.get_events_statistics()
-            
-            return {
-                "events_by_game": events_by_game,
-                "statistics": stats,
-                "scheduler_jobs": len(self.scheduler.get_jobs())
-            }
-            
-        except Exception as e:
-            logger.error(f"Ошибка получения информации о событиях: {e}")
-            return {"events_by_game": {}, "statistics": {}, "scheduler_jobs": 0}
 
 
 # Глобальный экземпляр планировщика

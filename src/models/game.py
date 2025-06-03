@@ -9,7 +9,8 @@ class GameStatus(enum.Enum):
     """Перечисление статусов игры"""
     RECRUITING = "recruiting"  # Набор участников
     UPCOMING = "upcoming"  # Игра скоро начнется
-    IN_PROGRESS = "in_progress"  # Игра в процессе
+    HIDING_PHASE = "hiding_phase"  # Фаза пряток (водители прячутся)
+    SEARCHING_PHASE = "searching_phase"  # Фаза поиска (искатели ищут)
     COMPLETED = "completed"  # Игра завершена
     CANCELED = "canceled"  # Игра отменена
 
@@ -17,6 +18,11 @@ class GameRole(enum.Enum):
     """Перечисление ролей в игре"""
     DRIVER = "driver"  # Водитель
     SEEKER = "seeker"  # Искатель
+
+class PhotoType(enum.Enum):
+    """Тип фотографии"""
+    HIDING_SPOT = "hiding_spot"  # Фото места пряток (от водителей)
+    FOUND_CAR = "found_car"      # Фото найденной машины (от искателей)
 
 class Game(Base):
     """Модель игры"""
@@ -117,9 +123,11 @@ class GameParticipant(Base):
     # Статусы участия
     is_ready = Column(Boolean, default=False)  # Готов к игре
     is_found = Column(Boolean, default=False)  # Найден (для искателей)
+    has_hidden = Column(Boolean, default=False)  # Отправил фото места (для водителей)
     
     # Время обнаружения
     found_at = Column(DateTime)
+    hidden_at = Column(DateTime)  # Время отправки фото места пряток
     
     # Поля для аудита
     joined_at = Column(DateTime, default=datetime.now)
@@ -164,12 +172,18 @@ class Photo(Base):
     # Информация о фото
     file_id = Column(String, nullable=False)  # Идентификатор файла в Telegram
     description = Column(Text)
+    photo_type = Column(Enum(PhotoType), nullable=False)  # Тип фотографии
     
-    # Статус проверки (принято/отклонено)
+    # Статус проверки (принято/отклонено админом)
     is_approved = Column(Boolean, nullable=True)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Кто подтвердил (админ)
     
-    # Время загрузки
+    # Время загрузки и проверки
     uploaded_at = Column(DateTime, default=datetime.now)
+    reviewed_at = Column(DateTime, nullable=True)
+    
+    # Для фото найденных машин - указание на найденного водителя
+    found_driver_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     
     def __repr__(self):
-        return f"<Photo(game_id={self.game_id}, user_id={self.user_id}, approved={self.is_approved})>" 
+        return f"<Photo(game_id={self.game_id}, user_id={self.user_id}, type={self.photo_type}, approved={self.is_approved})>" 

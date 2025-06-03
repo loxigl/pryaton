@@ -205,7 +205,7 @@ class LocationService:
             
         except Exception as e:
             logger.error(f"Ошибка поиска ближайших пользователей: {e}")
-            return []
+            return [] 
     
     @staticmethod
     def get_district_zones(district_name: str) -> List[DistrictZone]:

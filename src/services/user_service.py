@@ -96,3 +96,11 @@ class UserService:
         db_generator = get_db()
         db = next(db_generator)
         return db.query(User).filter(User.district == district).all() 
+    
+    @staticmethod
+    def get_admin_users() -> List[User]:
+        """Получение списка администраторов"""
+        db_generator = get_db()
+        db = next(db_generator)
+        admin_ids = os.getenv("ADMIN_USER_IDS", "").split(",")
+        return db.query(User).filter(User.telegram_id.in_(admin_ids)).all()

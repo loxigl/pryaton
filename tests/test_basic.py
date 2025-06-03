@@ -218,7 +218,7 @@ class TestIntegration:
         """Тест что enum статусов игр работает корректно"""
         assert GameStatus.RECRUITING is not None
         assert GameStatus.UPCOMING is not None
-        assert GameStatus.IN_PROGRESS is not None
+        assert GameStatus.HIDING_PHASE is not None
         assert GameStatus.COMPLETED is not None
         assert GameStatus.CANCELED is not None
         

@@ -26,7 +26,7 @@ class MonitoringService:
             
             # Активные игры (в процессе или скоро)
             active_games = db.query(Game).filter(
-                Game.status.in_([GameStatus.IN_PROGRESS, GameStatus.UPCOMING])
+                Game.status.in_([GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE, GameStatus.UPCOMING])
             ).all()
             
             # Игры сегодня

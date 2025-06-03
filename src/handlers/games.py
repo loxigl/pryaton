@@ -50,7 +50,7 @@ async def games_command(update: Update, context: CallbackContext) -> None:
     if not upcoming_games:
         await update.message.reply_text(
             "Сейчас нет запланированных игр. Загляните позже или создайте свою игру!",
-            reply_markup=get_contextual_main_keyboard(UserService.is_admin(user_id))
+            reply_markup=get_contextual_main_keyboard(user_id)
         )
         return
     
@@ -73,7 +73,7 @@ async def my_games_command(update: Update, context: CallbackContext) -> None:
     if not user:
         await update.message.reply_text(
             "❌ Ошибка: пользователь не найден в базе данных. Пожалуйста, перезапустите бота командой /start",
-            reply_markup=get_contextual_main_keyboard(UserService.is_admin(telegram_id))
+            reply_markup=get_contextual_main_keyboard(telegram_id)
         )
         return
     
@@ -83,7 +83,7 @@ async def my_games_command(update: Update, context: CallbackContext) -> None:
     if not user_games:
         await update.message.reply_text(
             "Вы еще не записаны ни на одну игру. Используйте /games, чтобы увидеть доступные игры.",
-            reply_markup=get_contextual_main_keyboard(UserService.is_admin(telegram_id))
+            reply_markup=get_contextual_main_keyboard(telegram_id)
         )
         return
     
@@ -344,7 +344,7 @@ async def game_info_button(update: Update, context: CallbackContext) -> None:
     logger.info(f"Пользователь {telegram_id} {'участвует' if is_participant else 'не участвует'} в игре {game_id}")
     
     # Если игра в процессе и пользователь участвует - показываем игровой интерфейс
-    if game.status == GameStatus.IN_PROGRESS and is_participant:
+    if game.status in [GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE] and is_participant:
         await show_game_interface(update, context, game, user)
     else:
         # Иначе показываем обычную информацию об игре
@@ -387,22 +387,26 @@ async def show_game_interface(update: Update, context: CallbackContext, game, us
             f"• Ищите спрятавшегося водителя\n"
             f"• Используйте подсказки и логику\n"
             f"• Отправляйте фото когда найдете\n"
-            f"• Нажмите 'Нашел машину' при обнаружении\n\n"
+            f"• Нажмите 'Нашел водителя' при обнаружении\n\n"
         )
     
     # Создаем игровую клавиатуру
     if role == GameRole.DRIVER:
         buttons = [
             [InlineKeyboardButton("📍 Отправить геолокацию", callback_data=f"send_location_{game.id}")],
-            [InlineKeyboardButton("🚗 Меня нашли!", callback_data=f"found_me_{game.id}")],
-            [InlineKeyboardButton("📊 Статус игры", callback_data=f"game_status_{game.id}")],
+            [InlineKeyboardButton("📸 Фото места", callback_data=f"photo_place_{game.id}")],
+            [InlineKeyboardButton("🚗 Меня нашли!", callback_data=f"found_seeker_{game.id}")],
+            [InlineKeyboardButton("📊 Статус игры", callback_data=f"game_status_{game.id}"),
+             InlineKeyboardButton("❓ Помощь", callback_data=f"game_help_{game.id}")],
             [InlineKeyboardButton("◀️ Назад к списку", callback_data="back_to_games")]
         ]
     else:
         buttons = [
-            [InlineKeyboardButton("📸 Отправить фото", callback_data=f"send_photo_{game.id}")],
-            [InlineKeyboardButton("🔍 Нашел машину!", callback_data=f"found_car_{game.id}")],
-            [InlineKeyboardButton("📊 Статус игры", callback_data=f"game_status_{game.id}")],
+            [InlineKeyboardButton("📍 Моя позиция", callback_data=f"send_location_{game.id}")],
+            [InlineKeyboardButton("📸 Фото находки", callback_data=f"photo_find_{game.id}")],
+            [InlineKeyboardButton("🔍 Нашел водителя!", callback_data=f"found_driver_{game.id}")],
+            [InlineKeyboardButton("📊 Статус игры", callback_data=f"game_status_{game.id}"),
+             InlineKeyboardButton("❓ Помощь", callback_data=f"game_help_{game.id}")],
             [InlineKeyboardButton("◀️ Назад к списку", callback_data="back_to_games")]
         ]
     
@@ -450,14 +454,15 @@ async def show_game_info(update: Update, context: CallbackContext, game, is_part
 # Функция для получения текстового представления статуса
 def get_status_text(status: GameStatus) -> str:
     """Возвращает текстовое представление статуса игры"""
-    status_map = {
-        GameStatus.RECRUITING: "👥 Набор участников",
-        GameStatus.UPCOMING: "🕒 Скоро начнется",
-        GameStatus.IN_PROGRESS: "▶️ В процессе",
+    status_texts = {
+        GameStatus.RECRUITING: "📝 Набор участников",
+        GameStatus.UPCOMING: "⏰ Скоро начнется",
+        GameStatus.HIDING_PHASE: "🏃 Фаза пряток",
+        GameStatus.SEARCHING_PHASE: "🔍 Фаза поиска",
         GameStatus.COMPLETED: "✅ Завершена",
         GameStatus.CANCELED: "❌ Отменена"
     }
-    return status_map.get(status, str(status))
+    return status_texts.get(status, str(status))
 
 # Регистрация обработчиков для игр
 game_handlers = [

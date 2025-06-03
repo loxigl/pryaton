@@ -2,11 +2,13 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 from loguru import logger
 from sqlalchemy.orm import selectinload
-
+import logging
 from src.models.base import get_db
 from src.models.user import User
 from src.models.game import Game, GameStatus, GameParticipant, GameRole
 from src.services.user_service import UserService
+
+logger = logging.getLogger(__name__)
 
 class UserGameContext:
     """Класс для хранения контекста игрока"""
@@ -33,7 +35,9 @@ class UserContextService:
         """Определить текущий игровой контекст пользователя"""
         db_generator = get_db()
         db = next(db_generator)
-        
+        if not isinstance(user_id, int):
+            logger.error(f"Некорректный тип user_id: {user_id} (тип {type(user_id)})")
+            return UserGameContext(UserContextService.STATUS_NORMAL)
         try:
             # Получаем пользователя
             user = db.query(User).filter(User.telegram_id == user_id).first()
@@ -50,7 +54,8 @@ class UserContextService:
                     Game.status.in_([
                         GameStatus.RECRUITING,
                         GameStatus.UPCOMING, 
-                        GameStatus.IN_PROGRESS,
+                        GameStatus.HIDING_PHASE,
+                        GameStatus.SEARCHING_PHASE,
                         GameStatus.COMPLETED
                     ])
                 )\
@@ -65,7 +70,7 @@ class UserContextService:
             latest_game = latest_participation.game
             
             # Определяем статус в зависимости от состояния игры
-            if latest_game.status == GameStatus.IN_PROGRESS:
+            if latest_game.status == GameStatus.HIDING_PHASE or latest_game.status == GameStatus.SEARCHING_PHASE:
                 return UserGameContext(
                     UserContextService.STATUS_IN_GAME,
                     latest_game,

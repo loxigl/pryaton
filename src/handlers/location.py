@@ -26,7 +26,7 @@ async def request_location_handler(update: Update, context: ContextTypes.DEFAULT
     if not active_games:
         await update.message.reply_text(
             "У вас нет активных игр, требующих отправки геолокации.",
-            reply_markup=get_contextual_main_keyboard(UserService.is_admin(user_id))
+            reply_markup=get_contextual_main_keyboard(user_id)
         )
         return
     
@@ -65,7 +65,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     longitude = location.longitude
     
     logger.info(f"Получена геолокация от пользователя {user_id}: {latitude}, {longitude}")
-    
+
     # Получаем пользователя
     user, _ = UserService.get_user_by_telegram_id(user_id)
     if not user:
@@ -78,7 +78,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not active_games:
         await update.message.reply_text(
             "У вас нет активных игр.",
-            reply_markup=get_contextual_main_keyboard(UserService.is_admin(user_id))
+            reply_markup=get_contextual_main_keyboard(user_id)
         )
         return
     
@@ -87,6 +87,9 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     for game in active_games:
         if LocationService.save_user_location(user.id, game.id, latitude, longitude):
             saved_count += 1
+            
+            # Уведомляем админов о получении геолокации
+            await notify_admins_about_location(context, user, game, latitude, longitude)
     
     if saved_count > 0:
         # Проверяем, находится ли пользователь в игровой зоне
@@ -115,7 +118,10 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if out_zone_games:
                 success_text += f"\n🟡 <b>Вне игровой зоны:</b>\n"
                 for game in out_zone_games:
-                    success_text += f"• {game.district}\n"
+                    zone_info = ""
+                    if game.has_game_zone:
+                        zone_info = f" (радиус {game.zone_radius}м)"
+                    success_text += f"• {game.district}{zone_info}\n"
                 success_text += f"Приближайтесь к зоне игры для участия."
         else:
             success_text += f"🟡 <b>Вы пока не в игровых зонах</b>\n"
@@ -123,13 +129,13 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         await update.message.reply_text(
             success_text,
-            reply_markup=get_contextual_main_keyboard(UserService.is_admin(user_id)),
+            reply_markup=get_contextual_main_keyboard(user_id),
             parse_mode="HTML"
         )
     else:
         await update.message.reply_text(
             "❌ Не удалось сохранить геолокацию. Попробуйте еще раз.",
-            reply_markup=get_contextual_main_keyboard(UserService.is_admin(user_id))
+            reply_markup=get_contextual_main_keyboard(user_id)
         )
 
 async def show_game_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -201,6 +207,62 @@ async def show_game_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text(map_text, parse_mode="HTML")
     else:
         await update.message.reply_text(map_text, parse_mode="HTML")
+
+async def notify_admins_about_location(context: ContextTypes.DEFAULT_TYPE, user, game, latitude: float, longitude: float) -> None:
+    """Уведомление администраторов о новой геолокации"""
+    try:
+        # Получаем список админов
+        admins = UserService.get_admin_users()
+        
+        if not admins:
+            logger.warning("Нет администраторов для уведомления о геолокации")
+            return
+        
+        # Определяем тип участника
+        participant = next(
+            (p for p in game.participants if p.user_id == user.id),
+            None
+        )
+        
+        role_text = "Неизвестная роль"
+        if participant and participant.role:
+            role_text = "🚗 Водитель" if participant.role.value == 'driver' else "🔍 Искатель"
+        
+        # Формируем текст уведомления
+        location_text = (
+            f"📍 <b>Новая геолокация!</b>\n\n"
+            f"👤 <b>От:</b> {user.name}\n"
+            f"🎮 <b>Игра:</b> {game.district}\n"
+            f"🎭 <b>Роль:</b> {role_text}\n"
+            f"📅 <b>Время:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"🌐 <b>Координаты:</b> {latitude:.6f}, {longitude:.6f}\n"
+        )
+        
+        # Проверяем, находится ли пользователь в игровой зоне
+        in_zone = LocationService.is_user_in_game_zone(user.id, game.id)
+        location_text += f"🎯 <b>В игровой зоне:</b> {'✅' if in_zone else '❌'}\n"
+        
+        # Отправляем уведомления всем админам
+        for admin in admins:
+            try:
+                # Отправляем сообщение с геолокацией
+                await context.bot.send_location(
+                    chat_id=admin.telegram_id,
+                    latitude=latitude,
+                    longitude=longitude
+                )
+                
+                # Отправляем информацию о пользователе
+                await context.bot.send_message(
+                    chat_id=admin.telegram_id,
+                    text=location_text,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления админу {admin.telegram_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Ошибка уведомления админов о геолокации: {e}")
 
 # Создаем обработчики
 location_handlers = [
