@@ -1248,7 +1248,6 @@ async def process_confirmation(update: Update, context: CallbackContext) -> int:
             creator_id=user.id,  # Используем user.id вместо telegram_id
             description=description
         )
-
         db=None
         
         # Обработка игровой зоны
