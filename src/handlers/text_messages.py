@@ -485,6 +485,7 @@ async def notify_drivers_about_found(context: ContextTypes.DEFAULT_TYPE, game_id
     try:
         from src.services.game_service import GameService
         from src.services.user_service import UserService
+        from src.models.game import GameStatus
         
         game = GameService.get_game_by_id(game_id)
         if not game or game.status not in [GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE]:
@@ -502,7 +503,6 @@ async def notify_drivers_about_found(context: ContextTypes.DEFAULT_TYPE, game_id
                                 f"🔍 <b>Вас нашли!</b>\n\n"
                                 f"🎮 <b>Игра:</b> {game.district}\n"
                                 f"👤 <b>Нашел:</b> {seeker_name}\n\n"
-                                f"Если это правда, нажмите кнопку '🚗 Меня нашли' для подтверждения."
                             ),
                             parse_mode="HTML"
                         )

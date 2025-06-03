@@ -1248,6 +1248,8 @@ async def process_confirmation(update: Update, context: CallbackContext) -> int:
             creator_id=user.id,  # Используем user.id вместо telegram_id
             description=description
         )
+
+        db=None
         
         # Обработка игровой зоны
         zone_result_text = ""
@@ -1286,7 +1288,8 @@ async def process_confirmation(update: Update, context: CallbackContext) -> int:
             f"{zone_result_text}\n\n"
             f"Используйте /admingames для управления играми."
         )
-        db.close()
+        if db:
+            db.close()
         
         
         await update.message.reply_text(
