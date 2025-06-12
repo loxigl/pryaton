@@ -33,14 +33,60 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     if db_user:
         # Пользователь уже зарегистрирован
+        # Проверяем заполненность новых полей автомобиля
+        if not db_user.car_brand or not db_user.car_color or not db_user.car_number:
+            context.user_data["name"] = db_user.name
+            context.user_data["phone"] = db_user.phone
+            context.user_data["district"] = db_user.district
+            context.user_data["role"] = db_user.default_role
+            if not db_user.car_brand:
+                car_brand_text = (
+                    f"🚗 <b>Укажите марку автомобиля</b>\nВведите название марки вашего автомобиля (например, Toyota, BMW и т.д.)."
+                )
+                keyboard = ReplyKeyboardMarkup([
+                    ["⬅️ Назад"],
+                    ["❌ Отмена"]
+                ], resize_keyboard=True)
+                await update.message.reply_text(
+                    car_brand_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                return ENTER_CAR_BRAND
+            elif not db_user.car_color:
+                car_color_text = (
+                    f"🎨 <b>Укажите цвет автомобиля</b>\nВведите цвет вашего автомобиля (например, белый, черный, красный и т.д.)."
+                )
+                keyboard = ReplyKeyboardMarkup([
+                    ["⬅️ Назад"],
+                    ["❌ Отмена"]
+                ], resize_keyboard=True)
+                await update.message.reply_text(
+                    car_color_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                return ENTER_CAR_COLOR
+            elif not db_user.car_number:
+                car_number_text = (
+                    f"🔢 <b>Укажите государственный номер автомобиля</b>\nВведите гос. номер вашего автомобиля (например, А123БВ777)."
+                )
+                keyboard = ReplyKeyboardMarkup([
+                    ["⬅️ Назад"],
+                    ["❌ Отмена"]
+                ], resize_keyboard=True)
+                await update.message.reply_text(
+                    car_number_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                return ENTER_CAR_NUMBER
         logger.info(f"Пользователь {user.id} уже зарегистрирован")
-        
         welcome_text = (
             f"🎉 <b>С возвращением, {db_user.name}!</b>\n\n"
             f"🏠 Добро пожаловать в главное меню бота PRYATON.\n"
             f"Выберите нужное действие из меню ниже:"
         )
-        
         await update.message.reply_text(
             welcome_text,
             reply_markup=get_contextual_main_keyboard(user.id),
@@ -488,7 +534,6 @@ async def process_rules_confirmation(update: Update, context: ContextTypes.DEFAU
     """Обработчик подтверждения правил"""
     user = update.effective_user
     confirmation = update.message.text
-    
     # Проверка на кнопку "Назад"
     if update.message.text == "⬅️ Назад":
         # Возвращаемся к вводу гос. номера автомобиля
@@ -497,43 +542,32 @@ async def process_rules_confirmation(update: Update, context: ContextTypes.DEFAU
             f"🔢 <b>Укажите государственный номер автомобиля</b>\n"
             f"Введите гос. номер вашего автомобиля (например, А123БВ777)."
         )
-        
         keyboard = ReplyKeyboardMarkup([
             ["⬅️ Назад"],
             ["❌ Отмена"]
         ], resize_keyboard=True)
-        
         await update.message.reply_text(
             car_number_text,
             reply_markup=keyboard,
             parse_mode="HTML"
         )
         return ENTER_CAR_NUMBER
-    
     if confirmation != "✅ Да, согласен с правилами":
         # Пользователь не согласен с правилами
         logger.info(f"Пользователь {user.id} не согласился с правилами")
-        
         reject_text = (
             "❌ <b>Регистрация отменена</b>\n\n"
             "К сожалению, вы не можете использовать бота без согласия с правилами.\n\n"
             "Если вы передумаете, нажмите /start для повторной регистрации."
         )
-        
         await update.message.reply_text(
             reject_text,
             reply_markup=remove_keyboard(),
             parse_mode="HTML"
         )
-        
-        # Очищаем временное хранилище
         context.user_data.clear()
-        
         return ConversationHandler.END
-    
-    # Пользователь согласился с правилами, завершаем регистрацию
     logger.info(f"Пользователь {user.id} согласился с правилами, завершаем регистрацию")
-    
     # Получаем данные из временного хранилища
     name = context.user_data.get("name")
     phone = context.user_data.get("phone") 
@@ -542,32 +576,43 @@ async def process_rules_confirmation(update: Update, context: ContextTypes.DEFAU
     car_brand = context.user_data.get("car_brand")
     car_color = context.user_data.get("car_color")
     car_number = context.user_data.get("car_number")
-    
-    # Создаем пользователя в БД
-    success = UserService.create_user(
-        telegram_id=user.id,
-        name=name,
-        username=user.username,
-        phone=phone,
-        district=district,
-        default_role=role,
-        car_brand=car_brand,
-        car_color=car_color,
-        car_number=car_number
-    )
-    
-    if not success:
-        logger.error(f"Ошибка при создании пользователя {user.id}")
-        await update.message.reply_text(
-            "❌ Произошла ошибка при регистрации. Попробуйте еще раз позже.",
-            reply_markup=remove_keyboard()
+    # Проверяем, есть ли пользователь в базе
+    db_generator = get_db()
+    db = next(db_generator)
+    db_user = db.query(User).filter(User.telegram_id == user.id).first()
+    if db_user:
+        # Обновляем только недостающие поля
+        update_fields = {}
+        if not db_user.car_brand:
+            update_fields["car_brand"] = car_brand
+        if not db_user.car_color:
+            update_fields["car_color"] = car_color
+        if not db_user.car_number:
+            update_fields["car_number"] = car_number
+        # Можно обновить и другие поля, если нужно
+        UserService.update_user(db_user.id, **update_fields)
+        logger.info(f"Пользователь {user.id} обновил недостающие поля профиля")
+    else:
+        # Создаём нового пользователя
+        success = UserService.create_user(
+            telegram_id=user.id,
+            name=name,
+            username=user.username,
+            phone=phone,
+            district=district,
+            default_role=role,
+            car_brand=car_brand,
+            car_color=car_color,
+            car_number=car_number
         )
-        return ConversationHandler.END
-    
-    # Очищаем временное хранилище
+        if not success:
+            logger.error(f"Ошибка при создании пользователя {user.id}")
+            await update.message.reply_text(
+                "❌ Произошла ошибка при регистрации. Попробуйте еще раз позже.",
+                reply_markup=remove_keyboard()
+            )
+            return ConversationHandler.END
     context.user_data.clear()
-    
-    # Завершаем регистрацию
     success_text = (
         f"🎉 <b>Поздравляем с регистрацией!</b>\n\n"
         f"✅ Вы успешно зарегистрировались в системе PRYATON.\n\n"
@@ -577,13 +622,11 @@ async def process_rules_confirmation(update: Update, context: ContextTypes.DEFAU
         f"• Общаться с другими игроками\n\n"
         f"🏠 Используйте главное меню для навигации!"
     )
-    
     await update.message.reply_text(
         success_text,
         reply_markup=get_contextual_main_keyboard(user.id),
         parse_mode="HTML"
     )
-    
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

@@ -140,7 +140,66 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Показываем помощь для пользователя {user_id}")
         await show_help(update, context)
     elif text == "🏠 Главное меню":
-        # Возвращаем контекстное главное меню
+        logger.info("Нажата кнопка главного меню")
+        # Проверяем заполненность новых полей автомобиля
+        user, _ = UserService.get_user_by_telegram_id(user_id)
+        if not user or not user.car_brand or not user.car_color or not user.car_number:
+            # Инициируем до-заполнение профиля через FSM регистрации
+            from src.handlers.start import (
+                process_car_brand, process_car_color, process_car_number,
+                ENTER_CAR_BRAND, ENTER_CAR_COLOR, ENTER_CAR_NUMBER
+            )
+            context.user_data["name"] = user.name if user else ""
+            context.user_data["phone"] = user.phone if user else ""
+            context.user_data["district"] = user.district if user else ""
+            context.user_data["role"] = user.default_role if user else ""
+            # Определяем, с какого этапа начинать
+            if not user or not user.car_brand:
+                car_brand_text = (
+                    f"🚗 <b>Укажите марку автомобиля</b>\nВведите название марки вашего автомобиля (например, Toyota, BMW и т.д.)."
+                )
+                from telegram import ReplyKeyboardMarkup
+                keyboard = ReplyKeyboardMarkup([
+                    ["⬅️ Назад"],
+                    ["❌ Отмена"]
+                ], resize_keyboard=True)
+                await update.message.reply_text(
+                    car_brand_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                return ENTER_CAR_BRAND
+            elif not user.car_color:
+                car_color_text = (
+                    f"🎨 <b>Укажите цвет автомобиля</b>\nВведите цвет вашего автомобиля (например, белый, черный, красный и т.д.)."
+                )
+                from telegram import ReplyKeyboardMarkup
+                keyboard = ReplyKeyboardMarkup([
+                    ["⬅️ Назад"],
+                    ["❌ Отмена"]
+                ], resize_keyboard=True)
+                await update.message.reply_text(
+                    car_color_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                return ENTER_CAR_COLOR
+            elif not user.car_number:
+                car_number_text = (
+                    f"🔢 <b>Укажите государственный номер автомобиля</b>\nВведите гос. номер вашего автомобиля (например, А123БВ777)."
+                )
+                from telegram import ReplyKeyboardMarkup
+                keyboard = ReplyKeyboardMarkup([
+                    ["⬅️ Назад"],
+                    ["❌ Отмена"]
+                ], resize_keyboard=True)
+                await update.message.reply_text(
+                    car_number_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                return ENTER_CAR_NUMBER
+        # Если все поля заполнены, показываем главное меню
         logger.info(f"Показываем контекстное главное меню для пользователя {user_id}")
         welcome_text = "🏠 <b>Главное меню</b>\n\nВыберите действие:"
         await update.message.reply_text(
@@ -402,34 +461,26 @@ async def handle_photo_button_action(update: Update, context: ContextTypes.DEFAU
 async def handle_game_completion_button_action(update: Update, context: ContextTypes.DEFAULT_TYPE, button_text: str) -> None:
     """Обработка кнопок завершения игры"""
     user_id = update.effective_user.id
-    
     try:
         from src.services.user_context_service import UserContextService
         game_context = UserContextService.get_user_game_context(user_id)
-        
         if game_context.status != UserContextService.STATUS_IN_GAME:
             await update.message.reply_text(
                 "🏁 Завершение игры доступно только во время активной игры",
                 reply_markup=get_contextual_main_keyboard(user_id)
             )
             return
-        
         game = game_context.game
         participant = game_context.participant
-        
         if not participant or not participant.role:
             await update.message.reply_text(
                 "❌ Не удалось определить вашу роль в игре",
                 reply_markup=get_contextual_main_keyboard(user_id)
             )
             return
-        
         role = participant.role.value
-        
         if button_text == "🚗 Меня нашли" and role == 'driver':
-            # Водитель подтверждает находку
             from src.services.game_service import GameService
-            
             success = GameService.mark_participant_found(game.id, participant.user_id)
             if success:
                 await update.message.reply_text(
@@ -440,21 +491,20 @@ async def handle_game_completion_button_action(update: Update, context: ContextT
                     parse_mode="HTML",
                     reply_markup=get_contextual_main_keyboard(user_id)
                 )
-                
-                # Уведомляем других участников
                 await notify_participants_about_found_driver(context, game.id, participant.user.name)
-                
-                # Проверяем завершение игры
                 from src.handlers.callback_handler import check_game_completion_callback
                 await check_game_completion_callback(context, game.id)
+                # Обновляем клавиатуру после завершения игры
+                await update.message.reply_text(
+                    "🏁 Игра завершена! Возвращаемся в главное меню.",
+                    reply_markup=get_contextual_main_keyboard(user_id)
+                )
             else:
                 await update.message.reply_text(
                     "❌ Не удалось отметить находку. Попробуйте еще раз.",
                     reply_markup=get_contextual_main_keyboard(user_id)
                 )
-        
         elif button_text == "🔍 Я нашел водителя" and role == 'seeker':
-            # Искатель сообщает о находке
             await update.message.reply_text(
                 f"🔍 <b>Сообщение о находке отправлено!</b>\n\n"
                 f"Вы сообщили, что нашли водителя в игре {game.district}.\n"
@@ -463,16 +513,17 @@ async def handle_game_completion_button_action(update: Update, context: ContextT
                 parse_mode="HTML",
                 reply_markup=get_contextual_main_keyboard(user_id)
             )
-            
-            # Уведомляем водителей
             await notify_drivers_about_found(context, game.id, participant.user.name)
-        
+            # Обновляем клавиатуру после завершения игры для искателя
+            await update.message.reply_text(
+                "🏁 Игра завершена! Возвращаемся в главное меню.",
+                reply_markup=get_contextual_main_keyboard(user_id)
+            )
         else:
             await update.message.reply_text(
                 f"❌ Кнопка '{button_text}' недоступна для вашей роли",
                 reply_markup=get_contextual_main_keyboard(user_id)
             )
-        
     except Exception as e:
         logger.error(f"Ошибка при обработке кнопки завершения для пользователя {user_id}: {e}")
         await update.message.reply_text(
