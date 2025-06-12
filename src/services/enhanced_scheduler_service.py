@@ -300,33 +300,39 @@ class EnhancedSchedulerService:
                 'scheduler_jobs': 0
             }
     
-    async def send_game_reminder(self, game_id: int, minutes_before: int, event_id: int):
-        """Отправка напоминания о предстоящей игре"""
+    def format_msk_time(self, dt: datetime) -> str:
+        """Форматирует время в МСК"""
+        msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+        return msk_time.strftime('%H:%M')
+    
+    def format_msk_datetime(self, dt: datetime) -> str:
+        """Форматирует дату и время в МСК"""
+        msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+        return msk_time.strftime('%d.%m.%Y в %H:%M')
+
+    async def send_game_reminder(self, game_id: int, minutes_before: int, event_id: Optional[int] = None):
+        """Отправка напоминания о игре"""
         try:
-            # Отмечаем событие как выполненное
-            EventPersistenceService.mark_event_executed(event_id)
-            
             game = GameService.get_game_by_id(game_id)
-            if not game or game.status not in [GameStatus.RECRUITING, GameStatus.UPCOMING]:
-                logger.info(f"Игра {game_id} отменена или уже началась, пропускаем напоминание")
+            if not game:
                 return
             
             # Формируем текст напоминания
-            if minutes_before >= 60:
-                time_text = f"{minutes_before // 60} час{'а' if minutes_before // 60 < 5 else 'ов'}"
-            else:
-                time_text = f"{minutes_before} минут"
-            
             reminder_text = (
-                f"⏰ <b>Напоминание о игре!</b>\n\n"
+                f"🔔 <b>Напоминание о игре!</b>\n\n"
                 f"🎮 <b>Игра:</b> {game.district}\n"
-                f"⏰ <b>Начало:</b> {game.scheduled_at.strftime('%d.%m.%Y в %H:%M')}\n"
-                f"📍 <b>До начала:</b> {time_text}\n\n"
-                f"Участников: {len(game.participants)}/{game.max_participants}\n\n"
-                f"Не забудьте подготовиться к игре!"
+                f"⏰ <b>Начало:</b> {self.format_msk_datetime(game.scheduled_at)}\n"
+                f"👥 <b>Участников:</b> {len(game.participants)}/{game.max_participants}\n\n"
             )
             
-            # Отправляем напоминания всем участникам
+            # Добавляем информацию о времени до начала
+            if minutes_before >= 60:
+                hours = minutes_before // 60
+                reminder_text += f"До начала осталось: <b>{hours} час(ов)</b>"
+            else:
+                reminder_text += f"До начала осталось: <b>{minutes_before} минут</b>"
+            
+            # Отправляем напоминание всем участникам
             sent_count = 0
             for participant in game.participants:
                 user, _ = UserService.get_user_by_id(participant.user_id)
@@ -341,10 +347,30 @@ class EnhancedSchedulerService:
                     except Exception as e:
                         logger.error(f"Ошибка отправки напоминания пользователю {user.telegram_id}: {e}")
             
+            # Уведомляем админов
+            admins = UserService.get_admin_users()
+            for admin in admins:
+                try:
+                    admin_text = (
+                        f"👨‍💼 <b>Админ-уведомление: Напоминание отправлено</b>\n\n"
+                        f"🎮 <b>Игра:</b> {game.district} (ID: {game.id})\n"
+                        f"⏰ <b>Время:</b> {self.format_msk_datetime(game.scheduled_at)}\n"
+                        f"👥 <b>Участников:</b> {len(game.participants)}\n\n"
+                        f"📊 Отправлено напоминаний: {sent_count}"
+                    )
+                    
+                    await self.bot.send_message(
+                        chat_id=admin.telegram_id,
+                        text=admin_text,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка уведомления админа {admin.telegram_id}: {e}")
+            
             logger.info(f"Отправлены напоминания для игры {game_id} ({sent_count} участников)")
             
         except Exception as e:
-            logger.error(f"Ошибка отправки напоминаний для игры {game_id}: {e}")
+            logger.error(f"Ошибка отправки напоминания для игры {game_id}: {e}")
     
     async def start_game(self, game_id: int, event_id: int, start_type: str = "auto"):
         """Запуск игры с уведомлениями - начинает фазу пряток"""
@@ -582,7 +608,7 @@ class EnhancedSchedulerService:
             else:
                 start_text = f"🚀 <b>Игра началась!</b>\n\n"
             
-            current_time = datetime.now()
+            current_time = datetime.now(DEFAULT_TIMEZONE)
             
             start_text += (
                 f"🎮 <b>Игра:</b> {game.district}\n"
@@ -699,7 +725,7 @@ class EnhancedSchedulerService:
             hiding_stats = GameService.get_hiding_stats(game_id)
             all_hidden = hiding_stats.get('all_hidden', False)
             
-            current_time = datetime.now()
+            current_time = datetime.now(DEFAULT_TIMEZONE)
             
             # Формируем текст уведомления
             if all_hidden:
@@ -791,10 +817,12 @@ class EnhancedSchedulerService:
             if not game:
                 return
             
+            current_time = datetime.now(DEFAULT_TIMEZONE)
+            
             end_text = (
                 f"🏁 <b>Игра завершена!</b>\n\n"
                 f"🎮 <b>Игра:</b> {game.district}\n"
-                f"⏰ <b>Время завершения:</b> {datetime.now().strftime('%H:%M')}\n\n"
+                f"⏰ <b>Время завершения:</b> {self.format_msk_time(current_time)}\n\n"
                 f"<b>Причина:</b> {reason}\n\n"
                 f"Спасибо за участие! Ждем вас в новых играх!"
             )
@@ -817,12 +845,6 @@ class EnhancedSchedulerService:
             
         except Exception as e:
             logger.error(f"Ошибка уведомления о завершении игры {game_id}: {e}")
-
-    # Функция для форматирования времени по МСК
-    def format_msk_time(self, dt: datetime) -> str:
-        """Форматирует время в МСК"""
-        msk_time = dt.astimezone(self.msk_timezone)
-        return msk_time.strftime('%H:%M')
 
 
 # Глобальный экземпляр планировщика
