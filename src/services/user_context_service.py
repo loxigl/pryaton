@@ -83,9 +83,9 @@ class UserContextService:
                     latest_participation
                 )
             elif latest_game.status == GameStatus.COMPLETED:
-                # Проверяем, завершена ли игра недавно (в последние 24 часа)
+                # Проверяем, завершена ли игра недавно (в последние 5 минут)
                 if latest_game.ended_at and \
-                   (datetime.now() - latest_game.ended_at).total_seconds() < 24 * 3600:
+                   (datetime.now() - latest_game.ended_at).total_seconds() < 60*5:
                     return UserGameContext(
                         UserContextService.STATUS_GAME_FINISHED,
                         latest_game,
@@ -107,7 +107,7 @@ class UserContextService:
             UserContextService.STATUS_IN_GAME,
             UserContextService.STATUS_GAME_FINISHED
         ] else None
-    
+
     @staticmethod
     def is_user_in_active_game(user_id: int) -> bool:
         """Проверить, участвует ли пользователь в активной игре"""

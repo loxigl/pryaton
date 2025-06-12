@@ -4,12 +4,23 @@ from loguru import logger
 from datetime import datetime, timedelta
 import psutil
 
+from src.services.enhanced_scheduler_service import DEFAULT_TIMEZONE
 from src.services.user_service import UserService
 from src.services.monitoring_service import MonitoringService
 from src.keyboards.reply import get_contextual_main_keyboard
 
 # Состояния для диалогов мониторинга
 MONITORING_MENU, VIEW_GAME_DETAILS, VIEW_PLAYER_STATS = range(3)
+
+def format_msk_time(dt: datetime) -> str:
+    """Форматирует время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%H:%M')
+
+def format_msk_datetime(dt: datetime) -> str:
+    """Форматирует дату и время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%d.%m.%Y %H:%M')
 
 async def monitoring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Команда мониторинга для админов"""
@@ -104,7 +115,7 @@ async def show_active_games(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             game_info = f"#{game['id']} {game['district']} ({game['participants']}/{game['max_participants']})"
             text += f"• <b>Игра #{game['id']}</b>\n"
             text += f"  📍 {game['district']}\n"
-            text += f"  ⏰ {game['scheduled_at'].strftime('%d.%m %H:%M')}\n"
+            text += f"  ⏰ {format_msk_datetime(game['scheduled_at'])}\n"
             text += f"  🚦 {game['status']}\n"
             text += f"  👥 {game['participants']}/{game['max_participants']}\n\n"
             
@@ -145,13 +156,13 @@ async def show_game_details(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         text = f"📋 <b>ДЕТАЛИ ИГРЫ #{game['id']}</b>\n\n"
         text += f"📍 <b>Район:</b> {game['district']}\n"
         text += f"🚦 <b>Статус:</b> {game['status']}\n"
-        text += f"⏰ <b>Запланировано:</b> {game['scheduled_at'].strftime('%d.%m.%Y в %H:%M')}\n"
+        text += f"⏰ <b>Запланировано:</b> {format_msk_datetime(game['scheduled_at'])}\n"
         
         if game['started_at']:
-            text += f"🚀 <b>Начато:</b> {game['started_at'].strftime('%d.%m.%Y в %H:%M')}\n"
+            text += f"🚀 <b>Начато:</b> {format_msk_datetime(game['started_at'])}\n"
         
         if game['ended_at']:
-            text += f"🏁 <b>Завершено:</b> {game['ended_at'].strftime('%d.%m.%Y в %H:%M')}\n"
+            text += f"🏁 <b>Завершено:</b> {format_msk_datetime(game['ended_at'])}\n"
         
         text += f"\n👥 <b>Участники:</b> {summary['total_participants']}/{game['max_participants']}\n"
         text += f"🚗 <b>Водители:</b> {summary['drivers_count']} (найдено: {summary['found_drivers']})\n"

@@ -1,7 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from loguru import logger
@@ -16,8 +16,23 @@ from src.services.game_service import GameService
 from src.services.event_persistence_service import EventPersistenceService
 from src.services.settings_service import SettingsService
 
+
 # Определяем временную зону (по умолчанию московское время)
 DEFAULT_TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Europe/Moscow"))
+
+def format_msk_time(dt: datetime) -> str:
+    """Форматирует время в МСК"""
+    if dt.tzinfo is None:
+        dt = DEFAULT_TIMEZONE.localize(dt)
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%H:%M')
+
+def format_msk_datetime(dt: datetime) -> str:
+    """Форматирует дату и время в МСК"""
+    if dt.tzinfo is None:
+        dt = DEFAULT_TIMEZONE.localize(dt)
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%d.%m.%Y в %H:%M')
 
 class EnhancedSchedulerService:
     """Улучшенный сервис планировщика с персистентными событиями"""
@@ -27,13 +42,17 @@ class EnhancedSchedulerService:
         self.scheduler = AsyncIOScheduler(timezone=DEFAULT_TIMEZONE)
         self.application = application
         self.bot = application.bot
-        
+        self.format_msk_time=format_msk_time
         # Настройки из переменных окружения
         self.hiding_time = int(os.getenv("HIDING_TIME", 30))  # минуты
         self.reminder_times = [int(x) for x in os.getenv("REMINDER_BEFORE_GAME", "60,24,5").split(",")]  # минуты
         self.hiding_warning_time = int(os.getenv("HIDING_WARNING_TIME", 5))  # за сколько минут предупреждать о конце пряток
         
         logger.info(f"Планировщик инициализирован с временной зоной: {DEFAULT_TIMEZONE}")
+        
+        self.event_persistence = EventPersistenceService()
+        db_generator = get_db()
+        self.db = next(db_generator)
     
     def start(self):
         """Запуск планировщика с восстановлением событий"""
@@ -300,16 +319,6 @@ class EnhancedSchedulerService:
                 'scheduler_jobs': 0
             }
     
-    def format_msk_time(self, dt: datetime) -> str:
-        """Форматирует время в МСК"""
-        msk_time = dt.astimezone(DEFAULT_TIMEZONE)
-        return msk_time.strftime('%H:%M')
-    
-    def format_msk_datetime(self, dt: datetime) -> str:
-        """Форматирует дату и время в МСК"""
-        msk_time = dt.astimezone(DEFAULT_TIMEZONE)
-        return msk_time.strftime('%d.%m.%Y в %H:%M')
-
     async def send_game_reminder(self, game_id: int, minutes_before: int, event_id: Optional[int] = None):
         """Отправка напоминания о игре"""
         try:

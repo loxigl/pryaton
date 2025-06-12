@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy import func, desc
 from loguru import logger
 
+from src.services.enhanced_scheduler_service import DEFAULT_TIMEZONE
 from src.models.base import get_db
 from src.models.game import Game, GameStatus, GameParticipant, GameRole, Location, Photo
 from src.models.user import User
@@ -10,7 +11,6 @@ from src.models.user import User
 
 class MonitoringService:
     """Сервис для мониторинга и статистики игр"""
-    
     @staticmethod
     def get_active_games_stats() -> Dict[str, Any]:
         """Получение статистики по активным играм"""
@@ -363,4 +363,104 @@ class MonitoringService:
             
         except Exception as e:
             logger.error(f"Ошибка генерации отчета по игре {game_id}: {e}")
-            return None 
+            return None
+
+def format_msk_time(dt: datetime) -> str:
+    """Форматирует время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%H:%M')
+
+def format_msk_datetime(dt: datetime) -> str:
+    """Форматирует дату и время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%d.%m.%Y %H:%M')
+
+
+    def __init__(self):
+        db_generator=get_db()
+        self.db = next(db_generator)
+    
+    def get_game_stats(self) -> dict:
+        """Получает статистику игр"""
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Получаем общую статистику
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_games,
+                    SUM(CASE WHEN status = 'FINISHED' THEN 1 ELSE 0 END) as finished_games,
+                    SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) as cancelled_games,
+                    COUNT(DISTINCT user_id) as total_participants,
+                    SUM(CASE WHEN role = 'DRIVER' THEN 1 ELSE 0 END) as total_drivers,
+                    MIN(scheduled_at) as first_game,
+                    MAX(scheduled_at) as last_game
+                FROM games g
+                LEFT JOIN participants p ON g.id = p.game_id
+            """)
+            
+            stats = cursor.fetchone()
+            
+            return {
+                'total_games': stats[0] or 0,
+                'finished_games': stats[1] or 0,
+                'cancelled_games': stats[2] or 0,
+                'total_participants': stats[3] or 0,
+                'total_drivers': stats[4] or 0,
+                'first_game': format_msk_datetime(stats[5]) if stats[5] else None,
+                'last_game': format_msk_datetime(stats[6]) if stats[6] else None
+            }
+    
+    def get_active_games(self) -> list:
+        """Получает список активных игр"""
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    g.id,
+                    g.district,
+                    g.scheduled_at,
+                    g.status,
+                    g.max_participants,
+                    COUNT(p.id) as participant_count,
+                    SUM(CASE WHEN p.role = 'DRIVER' THEN 1 ELSE 0 END) as driver_count
+                FROM games g
+                LEFT JOIN participants p ON g.id = p.game_id
+                WHERE g.status IN ('RECRUITING', 'UPCOMING', 'HIDING_PHASE', 'SEARCHING_PHASE')
+                GROUP BY g.id
+                ORDER BY g.scheduled_at DESC
+            """)
+            
+            games = []
+            for row in cursor.fetchall():
+                games.append({
+                    'id': row[0],
+                    'district': row[1],
+                    'scheduled_at': row[2],
+                    'status': row[3],
+                    'max_participants': row[4],
+                    'participants': row[5] or 0,
+                    'drivers': row[6] or 0
+                })
+            
+            return games
+    
+    def format_game_info(self, game: dict) -> str:
+        """Форматирует информацию об игре"""
+        status_emoji = {
+            'RECRUITING': '📝',
+            'UPCOMING': '⏳',
+            'HIDING_PHASE': '🏃',
+            'SEARCHING_PHASE': '🔍',
+            'FINISHED': '✅',
+            'CANCELLED': '❌'
+        }.get(game['status'], '❓')
+        
+        return (
+            f"{status_emoji} <b>Игра #{game['id']}</b>\n"
+            f"📍 {game['district']}\n"
+            f"⏰ {format_msk_datetime(game['scheduled_at'])}\n"
+            f"👥 {game['participants']}/{game['max_participants']}\n"
+            f"🚗 {game['drivers']} водителей"
+        ) 

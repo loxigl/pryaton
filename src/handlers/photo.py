@@ -1,7 +1,8 @@
+import pytz
 from telegram import Update, File, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from loguru import logger
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import uuid
 
@@ -10,6 +11,18 @@ from src.services.game_service import GameService
 from src.services.photo_service import PhotoService
 from src.models.game import GameStatus, GameRole, PhotoType
 from src.keyboards.reply import get_contextual_main_keyboard
+
+DEFAULT_TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Europe/Moscow"))
+
+def format_msk_time(dt: datetime) -> str:
+    """Форматирует время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%H:%M')
+
+def format_msk_datetime(dt: datetime) -> str:
+    """Форматирует дату и время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%d.%m.%Y %H:%M')
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик получения фотографии от пользователя"""
@@ -261,7 +274,7 @@ async def notify_admins_about_photo(context: ContextTypes.DEFAULT_TYPE, photo) -
             f"{photo_type_text.get(photo.photo_type, 'Фото')}\n"
             f"🎮 <b>Игра:</b> {game.district}\n"
             f"👤 <b>От:</b> {user.name}\n"
-            f"📅 <b>Время:</b> {photo.uploaded_at.strftime('%H:%M:%S')}\n"
+            f"📅 <b>Время:</b> {format_msk_datetime(photo.uploaded_at)}\n"
         )
         
         if photo.photo_type == PhotoType.FOUND_CAR and photo.found_driver_id:

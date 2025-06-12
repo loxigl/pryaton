@@ -1,15 +1,31 @@
+import os
+import pytz
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import CommandHandler, CallbackContext, CallbackQueryHandler
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import re
 from loguru import logger
 
+from src.models.game import GameRole, GameStatus
 from src.services.user_service import UserService
 from src.services.game_service import GameService
 from src.services.enhanced_scheduler_service import get_enhanced_scheduler
 from src.services.event_persistence_service import EventPersistenceService
-from src.keyboards.reply import get_contextual_main_keyboard
-from src.handlers.admin import get_admin_keyboard
+from src.keyboards.reply import get_contextual_main_keyboard, get_district_keyboard
+from src.handlers.admin import get_admin_keyboard, get_admin_or_main_keyboard,ConversationHandler
+from src.models.base import get_db
+
+DEFAULT_TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Europe/Moscow"))
+
+def format_msk_time(dt: datetime) -> str:
+    """Форматирует время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%H:%M')
+
+def format_msk_datetime(dt: datetime) -> str:
+    """Форматирует дату и время в МСК"""
+    msk_time = dt.astimezone(DEFAULT_TIMEZONE)
+    return msk_time.strftime('%d.%m.%Y %H:%M')
 
 async def scheduler_monitor_command(update: Update, context: CallbackContext) -> None:
     """Команда /scheduler_monitor - показывает состояние планировщика"""
@@ -48,7 +64,7 @@ async def scheduler_monitor_command(update: Update, context: CallbackContext) ->
             game = GameService.get_game_by_id(game_id)
             game_name = f"Игра #{game_id}"
             if game:
-                game_name = f"{game.district} ({game.scheduled_at.strftime('%d.%m %H:%M')})"
+                game_name = f"{game.district} ({format_msk_datetime(game.scheduled_at)})"
             
             report_text += f"🎯 <b>{game_name}</b>\n"
             
@@ -58,7 +74,7 @@ async def scheduler_monitor_command(update: Update, context: CallbackContext) ->
                     emoji = "⚠️"
                 
                 event_name = event.event_type.replace("_", " ").title()
-                time_str = event.scheduled_at.strftime('%d.%m %H:%M')
+                time_str = format_msk_datetime(event.scheduled_at)
                 
                 report_text += f"  {emoji} {event_name} → {time_str}\n"
             
@@ -480,4 +496,4 @@ def register_scheduler_admin_handlers(application):
     application.add_handler(CallbackQueryHandler(scheduler_test_restore_button, pattern="scheduler_test_restore"))
     application.add_handler(CallbackQueryHandler(scheduler_test_stats_button, pattern="scheduler_test_stats"))
     application.add_handler(CallbackQueryHandler(scheduler_test_overdue_button, pattern="scheduler_test_overdue"))
-    application.add_handler(CallbackQueryHandler(scheduler_mark_overdue_button, pattern="scheduler_mark_overdue")) 
+    application.add_handler(CallbackQueryHandler(scheduler_mark_overdue_button, pattern="scheduler_mark_overdue"))

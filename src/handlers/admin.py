@@ -10,7 +10,10 @@ from telegram.ext import (
 from datetime import datetime, timedelta
 import re
 from loguru import logger
+import os
+import pytz
 
+from src.services.enhanced_scheduler_service import format_msk_time,format_msk_datetime
 from src.services.user_service import UserService
 from src.services.game_service import GameService
 from src.services.settings_service import SettingsService
@@ -70,6 +73,9 @@ EDIT_DESCRIPTION_PATTERN = r"edit_description_(\d+)"
 SET_DISTRICT_PATTERN = r"set_district_(\d+)_(.+)"
 SET_PARTICIPANTS_PATTERN = r"set_participants_(\d+)_(\d+)"
 SET_DRIVERS_PATTERN = r"set_drivers_(\d+)_(\d+)"
+
+# Определяем временную зону (по умолчанию московское время)
+DEFAULT_TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Europe/Moscow"))
 
 def get_admin_keyboard() -> ReplyKeyboardMarkup:
     """Получение админской клавиатуры"""
@@ -144,7 +150,7 @@ async def admin_games_command(update: Update, context: CallbackContext) -> None:
     # Создаем клавиатуру для админа
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            f"{game.district} - {game.scheduled_at.strftime('%d.%m %H:%M')} ({len(game.participants)}/{game.max_participants})",
+            f"{game.district} - {format_msk_datetime(game.scheduled_at)} ({len(game.participants)}/{game.max_participants})",
             callback_data=f"admin_game_{game.id}"
         )] for game in all_games
     ] + [[InlineKeyboardButton("+ Создать новую игру", callback_data="create_game")]])
@@ -489,7 +495,7 @@ async def edit_district_button(update: Update, context: CallbackContext) -> None
     )
 
 async def edit_datetime_button(update: Update, context: CallbackContext) -> int:
-    """Обработчик кнопки изменения даты и времени"""
+    """Обработчик кнопки редактирования даты и времени"""
     query = update.callback_query
     await query.answer()
     
@@ -497,33 +503,28 @@ async def edit_datetime_button(update: Update, context: CallbackContext) -> int:
     
     if not UserService.is_admin(user_id):
         await query.edit_message_text("У вас нет прав доступа.")
-        return
+        return ConversationHandler.END
     
     match = re.match(EDIT_DATETIME_PATTERN, query.data)
     if not match:
-        return
+        return ConversationHandler.END
     
     game_id = int(match.group(1))
     game = GameService.get_game_by_id(game_id)
     
-    if not game or not GameService.can_edit_game(game_id):
-        await query.edit_message_text(
-            "❌ Игра не найдена или не может быть отредактирована.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("« Назад к управлению игрой", callback_data=f"admin_game_{game_id}")
-            ]])
-        )
-        return
+    if not game:
+        await query.edit_message_text("Игра не найдена.")
+        return ConversationHandler.END
     
-    # Сохраняем ID игры в контексте для последующего использования
+    # Сохраняем ID игры в контексте
     context.user_data["edit_game_id"] = game_id
     
     await query.edit_message_text(
-        f"⏰ <b>Изменение даты и времени для игры #{game_id}</b>\n\n"
-        f"Текущие дата и время: <b>{game.scheduled_at.strftime('%d.%m.%Y %H:%M')}</b>\n\n"
-        f"Напишите новую дату и время в формате:\n"
-        f"<code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n\n"
-        f"Например: <code>25.12.2024 18:30</code>",
+        f"📅 <b>Редактирование даты и времени</b>\n\n"
+        f"Текущие дата и время: <b>{format_msk_datetime(game.scheduled_at)}</b>\n\n"
+        f"Отправьте новые дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ\n"
+        f"Например: 25.12.2024 18:30\n\n"
+        f"Или отправьте /cancel для отмены.",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("« Назад к редактированию", callback_data=f"edit_game_{game_id}")
         ]]),
@@ -531,6 +532,46 @@ async def edit_datetime_button(update: Update, context: CallbackContext) -> int:
     )
     
     return EDIT_GAME_DATETIME_VALUE
+
+async def process_datetime_edit(update: Update, context: CallbackContext) -> int:
+    """Обработка нового значения даты и времени"""
+    game_id = context.user_data.get("edit_game_id")
+    if not game_id:
+        await update.message.reply_text("❌ Ошибка: игра не найдена.")
+        return ConversationHandler.END
+    
+    datetime_text = update.message.text.strip()
+    
+    try:
+        # Парсим дату и время
+        new_datetime = datetime.strptime(datetime_text, "%d.%m.%Y %H:%M")
+        # Добавляем московскую временную зону
+        new_datetime = DEFAULT_TIMEZONE.localize(new_datetime)
+        
+        # Применяем изменение
+        success = GameService.update_game(game_id, scheduled_at=new_datetime)
+        
+        if success:
+            await update.message.reply_text(
+                f"✅ <b>Дата и время успешно изменены!</b>\n\n"
+                f"Новые дата и время: <b>{format_msk_datetime(new_datetime)}</b>",
+                parse_mode="HTML"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ <b>Не удалось изменить дату и время.</b>",
+                parse_mode="HTML"
+            )
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Неверный формат даты и времени. Используйте формат: ДД.ММ.ГГГГ ЧЧ:ММ\n"
+            "Например: 25.12.2024 18:30"
+        )
+        return EDIT_GAME_DATETIME_VALUE
+    
+    # Очищаем данные
+    context.user_data.clear()
+    return ConversationHandler.END
 
 async def edit_participants_button(update: Update, context: CallbackContext) -> None:
     """Обработчик кнопки изменения количества участников"""
