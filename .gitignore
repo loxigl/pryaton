@@ -48,3 +48,4 @@ logs/
 # Miscellaneous
 .DS_Store
 .pytest_cache/ 
+alembic/versions/
