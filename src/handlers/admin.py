@@ -46,7 +46,9 @@ EDIT_RULES = 10
 DISTRICT_ACTION, ADD_DISTRICT_NAME, REMOVE_DISTRICT_NAME = range(11, 14)
 
 # Состояния для редактирования ролей
-ROLE_ACTION, ADD_ROLE_NAME, REMOVE_ROLE_NAME = range(14, 17)
+ROLE_ACTION = 5
+EDIT_ROLE_DISPLAY = 6
+ENTER_NEW_ROLE_DISPLAY = 7
 
 # Состояния для редактирования игр
 EDIT_GAME_FIELD, EDIT_GAME_VALUE, EDIT_GAME_SAVE = range(17, 20)
@@ -1427,29 +1429,105 @@ async def manage_roles_command(update: Update, context: CallbackContext) -> int:
         )
         return ConversationHandler.END
     
-    roles = SettingsService.get_all_roles()
-    active_roles = [r for r in roles if r.is_active]
-    inactive_roles = [r for r in roles if not r.is_active]
-    
-    active_text = "\n".join([f"• {role.name}" for role in active_roles])
-    inactive_text = "\n".join([f"• {role.name}" for role in inactive_roles]) if inactive_roles else "Нет"
+    roles = SettingsService.get_available_roles()
     
     keyboard = ReplyKeyboardMarkup([
-        ["➕ Добавить роль", "❌ Удалить роль"],
-        ["🔄 Восстановить роль", "📋 Показать все"],
+        ["📝 Изменить отображение роли"],
         ["« Назад в админку"]
     ], resize_keyboard=True)
     
+    roles_text = "\n".join([f"• {role}" for role in roles])
+    
     await update.message.reply_text(
         f"👤 <b>Управление ролями</b>\n\n"
-        f"<b>Активные роли:</b>\n{active_text}\n\n"
-        f"<b>Деактивированные:</b>\n{inactive_text}\n\n"
+        f"<b>Доступные роли:</b>\n{roles_text}\n\n"
         f"Выберите действие:",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
     
     return ROLE_ACTION
+
+async def role_action_handler(update: Update, context: CallbackContext) -> int:
+    """Обработчик действий с ролями"""
+    text = update.message.text
+    
+    if text == "📝 Изменить отображение роли":
+        roles = SettingsService.get_available_roles()
+        keyboard = ReplyKeyboardMarkup(
+            [[role] for role in roles] + [["« Отмена"]],
+            resize_keyboard=True
+        )
+        await update.message.reply_text(
+            "Выберите роль для изменения отображения:",
+            reply_markup=keyboard
+        )
+        return EDIT_ROLE_DISPLAY
+    elif text == "« Назад в админку":
+        return await admin_command(update, context)
+    
+    await update.message.reply_text(
+        "Пожалуйста, выберите действие из меню.",
+        reply_markup=get_admin_or_main_keyboard(update.effective_user.id, True)
+    )
+    return ConversationHandler.END
+
+async def edit_role_display_handler(update: Update, context: CallbackContext) -> int:
+    """Обработчик изменения отображения роли"""
+    role_display = update.message.text.strip()
+    
+    if role_display == "« Отмена":
+        return await manage_roles_command(update, context)
+    
+    # Сохраняем выбранную роль для редактирования
+    context.user_data["editing_role"] = role_display
+    
+    await update.message.reply_text(
+        f"Введите новое отображаемое имя для роли {role_display}:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return ENTER_NEW_ROLE_DISPLAY
+
+async def enter_new_role_display_handler(update: Update, context: CallbackContext) -> int:
+    """Обработчик ввода нового отображаемого имени роли"""
+    new_display = update.message.text.strip()
+    old_display = context.user_data.get("editing_role")
+    
+    if not old_display:
+        await update.message.reply_text(
+            "Произошла ошибка. Попробуйте снова.",
+            reply_markup=get_admin_or_main_keyboard(update.effective_user.id, True)
+        )
+        return ConversationHandler.END
+    
+    # Получаем роль из старого отображения
+    role = SettingsService.get_role_from_display_name(old_display)
+    if not role:
+        await update.message.reply_text(
+            "Не удалось найти роль. Попробуйте снова.",
+            reply_markup=get_admin_or_main_keyboard(update.effective_user.id, True)
+        )
+        return ConversationHandler.END
+    
+    # Обновляем отображение роли
+    success = SettingsService.update_role_display(role, new_display)
+    
+    if success:
+        await update.message.reply_text(
+            f"✅ Отображение роли успешно изменено!\n"
+            f"Было: {old_display}\n"
+            f"Стало: {new_display}"
+        )
+    else:
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обновлении отображения роли."
+        )
+    
+    # Очищаем временные данные
+    if "editing_role" in context.user_data:
+        del context.user_data["editing_role"]
+    
+    return await manage_roles_command(update, context)
 
 # Обработчики для районов
 async def district_action_handler(update: Update, context: CallbackContext) -> int:
@@ -1565,119 +1643,6 @@ async def remove_district_handler(update: Update, context: CallbackContext) -> i
     # Возвращаемся к экрану управления районами
     return await manage_districts_command(update, context)
 
-# Обработчики для ролей (аналогично районам)
-async def role_action_handler(update: Update, context: CallbackContext) -> int:
-    """Обработчик действий с ролями"""
-    text = update.message.text
-    
-    if text == "➕ Добавить роль":
-        await update.message.reply_text(
-            "Введите название новой роли:",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return ADD_ROLE_NAME
-    elif text == "❌ Удалить роль":
-        roles = SettingsService.get_available_roles()
-        if not roles:
-            await update.message.reply_text(
-                "Нет активных ролей для удаления.",
-                reply_markup=get_admin_or_main_keyboard(update.effective_user.id, True)
-            )
-            return ConversationHandler.END
-        
-        keyboard = ReplyKeyboardMarkup(
-            [[role] for role in roles] + [["« Отмена"]],
-            resize_keyboard=True
-        )
-        await update.message.reply_text(
-            "Выберите роль для деактивации:",
-            reply_markup=keyboard
-        )
-        return REMOVE_ROLE_NAME
-    elif text == "🔄 Восстановить роль":
-        all_roles = SettingsService.get_all_roles()
-        inactive_roles = [r.name for r in all_roles if not r.is_active]
-        
-        if not inactive_roles:
-            await update.message.reply_text(
-                "Нет деактивированных ролей для восстановления.",
-                reply_markup=get_admin_or_main_keyboard(update.effective_user.id, True)
-            )
-            return ConversationHandler.END
-        
-        keyboard = ReplyKeyboardMarkup(
-            [[role] for role in inactive_roles] + [["« Отмена"]],
-            resize_keyboard=True
-        )
-        await update.message.reply_text(
-            "Выберите роль для восстановления:",
-            reply_markup=keyboard
-        )
-        context.user_data["restore_role"] = True
-        return REMOVE_ROLE_NAME
-    elif text == "« Назад в админку":
-        return await admin_command(update, context)
-    
-    return ROLE_ACTION
-
-async def add_role_handler(update: Update, context: CallbackContext) -> int:
-    """Обработчик добавления новой роли"""
-    role_name = update.message.text.strip()
-    
-    if len(role_name) < 2:
-        await update.message.reply_text(
-            "Название роли должно содержать минимум 2 символа. Попробуйте еще раз:"
-        )
-        return ADD_ROLE_NAME
-    
-    success = SettingsService.add_role(role_name)
-    
-    if success:
-        await update.message.reply_text(
-            f"✅ Роль '{role_name}' успешно добавлена!"
-        )
-    else:
-        await update.message.reply_text(
-            f"❌ Роль '{role_name}' уже существует или произошла ошибка."
-        )
-    
-    # Возвращаемся к экрану управления ролями
-    return await manage_roles_command(update, context)
-
-async def remove_role_handler(update: Update, context: CallbackContext) -> int:
-    """Обработчик удаления/восстановления роли"""
-    role_name = update.message.text.strip()
-    
-    if role_name == "« Отмена":
-        # Возвращаемся к управлению ролями
-        return await manage_roles_command(update, context)
-    
-    restore_mode = context.user_data.get("restore_role", False)
-    
-    if restore_mode:
-        # Восстанавливаем роль
-        success = SettingsService.add_role(role_name)  # Функция сама проверит и восстановит
-        action = "восстановлена"
-    else:
-        # Деактивируем роль
-        success = SettingsService.remove_role(role_name)
-        action = "деактивирована"
-    
-    if success:
-        await update.message.reply_text(
-            f"✅ Роль '{role_name}' успешно {action}!"
-        )
-    else:
-        await update.message.reply_text(
-            f"❌ Не удалось обработать роль '{role_name}'."
-        )
-    
-    # Очищаем флаг восстановления
-    if "restore_role" in context.user_data:
-        del context.user_data["restore_role"]
-    
-    # Возвращаемся к экрану управления ролями
-    return await manage_roles_command(update, context)
 
 async def edit_rules_command(update: Update, context: CallbackContext) -> int:
     """Начало редактирования правил"""
@@ -1783,8 +1748,8 @@ roles_conversation = ConversationHandler(
     ],
     states={
         ROLE_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, role_action_handler)],
-        ADD_ROLE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_role_handler)],
-        REMOVE_ROLE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_role_handler)]
+        EDIT_ROLE_DISPLAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_role_display_handler)],
+        ENTER_NEW_ROLE_DISPLAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_new_role_display_handler)]
     },
     fallbacks=[CommandHandler("cancel", cancel_admin_operation)]
 )

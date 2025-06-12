@@ -1,9 +1,11 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, Float, ForeignKey, Enum
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import enum
 
 from src.models.base import Base
+from src.models.user import UserRole
 
 class District(Base):
     """Модель района"""
@@ -58,21 +60,20 @@ class DistrictZone(Base):
     def __repr__(self):
         return f"<DistrictZone(id={self.id}, district={self.district_name}, zone={self.zone_name})>"
 
-class Role(Base):
-    """Модель роли"""
-    __tablename__ = "roles"
+class RoleDisplay(Base):
+    """Модель отображения роли"""
+    __tablename__ = "role_displays"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False, index=True)
-    is_active = Column(Boolean, default=True)
-    description = Column(Text, nullable=True)
+    role = Column(Enum(UserRole), unique=True, nullable=False, index=True)
+    display_name = Column(String, nullable=False)
     
     # Поля для аудита
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     def __repr__(self):
-        return f"<Role(id={self.id}, name={self.name}, active={self.is_active})>"
+        return f"<RoleDisplay(role={self.role}, display_name={self.display_name})>"
 
 class GameRule(Base):
     """Модель правил игры"""

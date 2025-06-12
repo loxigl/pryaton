@@ -20,6 +20,7 @@ from src.models.base import Base
 from src.models.user import User
 from src.models.game import Game, GameStatus, GameRole
 from src.models.settings import Setting, District, Role
+from src.models.user import UserRole
 
 
 class TestFullGameCycle:
@@ -67,12 +68,6 @@ class TestFullGameCycle:
             district = District(name=district_name, is_active=True)
             self.session.add(district)
         
-        # Добавляем роли
-        roles = ["Игрок", "Водитель", "Искатель"]
-        for role_name in roles:
-            role = Role(name=role_name, is_active=True)
-            self.session.add(role)
-        
         # Добавляем настройки
         settings = [
             Setting(key="game_rules", value="Тестовые правила игры"),
@@ -93,7 +88,7 @@ class TestFullGameCycle:
             telegram_id=123456789,
             name="Админ Тестовый",
             district="Центр",
-            default_role="Игрок",
+            default_role=UserRole.PLAYER,
             is_registered=True
         )
         self.session.add(admin)
@@ -105,7 +100,7 @@ class TestFullGameCycle:
                 telegram_id=100000000 + i,
                 name=f"Пользователь {i}",
                 district="Центр",
-                default_role="Игрок", 
+                default_role=UserRole.PLAYER,
                 is_registered=True
             )
             self.session.add(user)

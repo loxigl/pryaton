@@ -103,21 +103,81 @@ class TestSettingsService:
         
         # Должны вернуться дефолтные районы
         assert len(districts) > 0
-        assert "Центр" in districts
+        assert "Тестовый район" in districts
     
     @patch('src.services.settings_service.get_db')
-    def test_get_available_roles_default(self, mock_get_db):
-        """Тест получения дефолтных ролей"""
+    def test_get_available_roles(self, mock_get_db):
+        """Тест получения доступных ролей"""
+        # Мокаем пустую базу данных
         mock_db = Mock()
         mock_db.query().count.return_value = 0
         mock_get_db.return_value = iter([mock_db])
         
         roles = SettingsService.get_available_roles()
         
-        # Должны вернуться дефолтные роли
-        assert len(roles) > 0
-        assert "Игрок" in roles
-        assert "Водитель" in roles
+        # Должны вернуться все роли с их отображением
+        assert len(roles) == 3
+        assert "🔍 Игрок" in roles
+        assert "🚗 Водитель" in roles
+        assert "👁 Наблюдатель" in roles
+    
+    @patch('src.services.settings_service.get_db')
+    def test_get_role_display_name(self, mock_get_db):
+        """Тест получения отображаемого имени роли"""
+        from src.models.user import UserRole
+        
+        # Мокаем базу данных с отображениями ролей
+        mock_db = Mock()
+        mock_role_display = Mock()
+        mock_role_display.display_name = "🔍 Игрок"
+        mock_db.query().filter().first.return_value = mock_role_display
+        mock_get_db.return_value = iter([mock_db])
+        
+        # Проверяем получение отображения из БД
+        assert SettingsService.get_role_display_name(UserRole.PLAYER) == "🔍 Игрок"
+        
+        # Проверяем получение дефолтного отображения
+        mock_db.query().filter().first.return_value = None
+        assert SettingsService.get_role_display_name(UserRole.DRIVER) == "🚗 Водитель"
+    
+    @patch('src.services.settings_service.get_db')
+    def test_get_role_from_display_name(self, mock_get_db):
+        """Тест получения роли из отображаемого имени"""
+        from src.models.user import UserRole
+        
+        # Мокаем базу данных с отображениями ролей
+        mock_db = Mock()
+        mock_role_display = Mock()
+        mock_role_display.role = UserRole.PLAYER
+        mock_db.query().filter().first.return_value = mock_role_display
+        mock_get_db.return_value = iter([mock_db])
+        
+        # Проверяем получение роли из БД
+        assert SettingsService.get_role_from_display_name("🔍 Игрок") == UserRole.PLAYER
+        
+        # Проверяем получение None для несуществующего отображения
+        mock_db.query().filter().first.return_value = None
+        assert SettingsService.get_role_from_display_name("Несуществующая роль") is None
+    
+    @patch('src.services.settings_service.get_db')
+    def test_update_role_display(self, mock_get_db):
+        """Тест обновления отображения роли"""
+        from src.models.user import UserRole
+        
+        # Мокаем базу данных
+        mock_db = Mock()
+        mock_role_display = Mock()
+        mock_db.query().filter().first.return_value = mock_role_display
+        mock_get_db.return_value = iter([mock_db])
+        
+        # Проверяем обновление существующего отображения
+        assert SettingsService.update_role_display(UserRole.PLAYER, "🎮 Игрок") is True
+        assert mock_role_display.display_name == "🎮 Игрок"
+        
+        # Проверяем создание нового отображения
+        mock_db.query().filter().first.return_value = None
+        assert SettingsService.update_role_display(UserRole.DRIVER, "🚘 Водитель") is True
+        mock_db.add.assert_called_once()
 
 
 class TestSchedulerService:

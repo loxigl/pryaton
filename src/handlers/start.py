@@ -278,21 +278,8 @@ async def process_role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         )
         return ENTER_DISTRICT
     
-    # Преобразуем текст роли в enum
-    role_mapping = {
-        "Игрок": UserRole.PLAYER,
-        "Водитель": UserRole.DRIVER,
-        "Наблюдатель": UserRole.OBSERVER
-    }
-    
-    # Пытаемся получить роль из пользовательских ролей
-    available_roles = SettingsService.get_available_roles()
-    for available_role in available_roles:
-        if role_text == available_role:
-            # Пользовательские роли по умолчанию будут сопоставлены с UserRole.PLAYER
-            role_mapping[role_text] = UserRole.PLAYER
-    
-    role = role_mapping.get(role_text, None)
+    # Получаем роль из отображаемого имени
+    role = SettingsService.get_role_from_display_name(role_text)
     
     if role is None and role_text != "❌ Отмена":
         await update.message.reply_text(

@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes, MessageHandler, filters
 from loguru import logger
 
 from src.services.user_service import UserService
+from src.services.settings_service import SettingsService
 
 from src.handlers.games import games_command, my_games_command
 from src.handlers.admin import admin_command
@@ -384,12 +385,7 @@ async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 def get_role_text(role) -> str:
     """Получить текстовое представление роли"""
-    role_texts = {
-        'player': '🔍 Игрок',
-        'driver': '🚗 Водитель',
-        'observer': '👁 Наблюдатель'
-    }
-    return role_texts.get(role.value if hasattr(role, 'value') else str(role), str(role))
+    return SettingsService.get_role_display_name(role)
 
 async def handle_photo_button_action(update: Update, context: ContextTypes.DEFAULT_TYPE, button_text: str) -> None:
     """Обработка кнопок фотографий"""
