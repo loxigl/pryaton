@@ -4,7 +4,7 @@ import os
 import time
 import signal
 from dotenv import load_dotenv
-from telegram.ext import Application, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import Application, ConversationHandler, MessageHandler, filters
 from sqlalchemy import text
 
 from src.handlers.start import (
@@ -19,12 +19,18 @@ from src.handlers.start import (
     ENTER_PHONE, 
     ENTER_DISTRICT, 
     ENTER_ROLE, 
-    CONFIRM_RULES
+    CONFIRM_RULES,
+    process_car_brand,
+    process_car_color,
+    process_car_number,
+    ENTER_CAR_BRAND,
+    ENTER_CAR_COLOR,
+    ENTER_CAR_NUMBER
 )
 from src.handlers.games import game_handlers
 from src.handlers.admin import (
     admin_handlers, 
-    create_game_conversation, 
+    create_game_conversation,
     edit_rules_conversation,
     districts_conversation,
     roles_conversation,
@@ -109,6 +115,9 @@ async def main():
             ],
             ENTER_DISTRICT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_district)],
             ENTER_ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_role)],
+            ENTER_CAR_BRAND: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_car_brand)],
+            ENTER_CAR_COLOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_car_color)],
+            ENTER_CAR_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_car_number)],
             CONFIRM_RULES: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_rules_confirmation)]
         },
         fallbacks=[MessageHandler(filters.Regex("^❌ Отмена"), cancel)]

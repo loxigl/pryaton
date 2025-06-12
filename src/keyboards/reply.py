@@ -3,10 +3,14 @@ from src.services.settings_service import SettingsService
 
 def get_phone_keyboard():
     """Клавиатура для запроса номера телефона"""
-    button = KeyboardButton(text="📱 Поделиться контактом", request_contact=True)
-    skip_button = KeyboardButton(text="⏭ Пропустить")
-    cancel_button = KeyboardButton(text="❌ Отмена")
-    keyboard = ReplyKeyboardMarkup([[button], [skip_button], [cancel_button]], resize_keyboard=True)
+    contact_button = KeyboardButton(text="📱 Поделиться контактом", request_contact=True)
+    skip_button = KeyboardButton(text="➡️ Пропустить")
+    back_button = KeyboardButton(text="⬅️ Назад")
+    keyboard = ReplyKeyboardMarkup([
+        [contact_button], 
+        [skip_button],
+        [back_button]
+    ], resize_keyboard=True)
     return keyboard
 
 def get_district_keyboard():
@@ -26,7 +30,8 @@ def get_district_keyboard():
     if row:  # Добавляем оставшиеся кнопки
         buttons.append(row)
     
-    # Добавляем кнопку отмены
+    # Добавляем кнопку назад и отмены
+    buttons.append([KeyboardButton(text="⬅️ Назад")])
     buttons.append([KeyboardButton(text="❌ Отмена")])
     
     keyboard = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
@@ -37,26 +42,31 @@ def get_role_keyboard():
     roles = SettingsService.get_available_roles()
     buttons = [[KeyboardButton(text=role)] for role in roles]
     
-    # Добавляем кнопку отмены
+    # Добавляем кнопку назад и отмены
+    buttons.append([KeyboardButton(text="⬅️ Назад")])
     buttons.append([KeyboardButton(text="❌ Отмена")])
     
     keyboard = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
     return keyboard
 
 def get_confirmation_keyboard():
-    """Клавиатура для подтверждения"""
-    buttons = [
-        [KeyboardButton(text="✅ Да, согласен с правилами")], 
-        [KeyboardButton(text="❌ Нет, не согласен")]
-    ]
-    keyboard = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    """Клавиатура для подтверждения правил"""
+    yes_button = KeyboardButton(text="✅ Да, согласен с правилами")
+    no_button = KeyboardButton(text="❌ Нет, не согласен с правилами")
+    back_button = KeyboardButton(text="⬅️ Назад")
+    keyboard = ReplyKeyboardMarkup([
+        [yes_button],
+        [no_button],
+        [back_button]
+    ], resize_keyboard=True)
     return keyboard
 
 def get_main_keyboard(is_admin=False):
     """Основная клавиатура после регистрации (legacy - для обратной совместимости)"""
     buttons = [
         [KeyboardButton(text="🎮 Доступные игры"), KeyboardButton(text="🎯 Мои игры")],
-        [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="ℹ️ Помощь")]
+        [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="ℹ️ Помощь")],
+        [KeyboardButton(text="🏠 Главное меню")]
     ]
     
     if is_admin:

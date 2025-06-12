@@ -304,29 +304,34 @@ class GameService:
     
     @staticmethod
     def _start_game_internal(game_id: int) -> bool:
-        """Внутренний метод запуска игры - переводит в фазу пряток"""
-        db_generator = get_db()
-        db = next(db_generator)
-        
-        game = db.query(Game).filter(Game.id == game_id).first()
-        if not game:
-            logger.error(f"Игра с ID {game_id} не найдена")
-            return False
-        
-        # Проверка, что все роли назначены
-        participants = db.query(GameParticipant).filter(GameParticipant.game_id == game_id).all()
-        for participant in participants:
-            if not participant.role:
-                logger.error(f"Не все роли назначены для игры с ID {game_id}")
+        """Внутренний метод для старта игры - меняет статус игры и помечает время старта"""
+        try:
+            db_generator = get_db()
+            db = next(db_generator)
+            
+            game = db.query(Game).filter(Game.id == game_id).first()
+            if not game:
+                logger.error(f"Игра с ID {game_id} не найдена")
                 return False
-        
-        # Обновление статуса игры на фазу пряток
-        game.status = GameStatus.HIDING_PHASE
-        game.started_at = datetime.now()
-        db.commit()
-        
-        logger.info(f"Игра {game_id} запущена - фаза пряток начата")
-        return True
+            
+            if game.status != GameStatus.UPCOMING:
+                logger.error(f"Игра {game_id} не в статусе 'скоро начнется', текущий статус: {game.status}")
+                return False
+            
+            game.status = GameStatus.HIDING_PHASE
+            game.started_at = datetime.now()
+            db.commit()
+            
+            logger.info(f"Игра {game_id} запущена, переведена в фазу пряток")
+
+            # Добавляем задачу отправки обновленных клавиатур всем игрокам
+            from src.services.keyboard_update_service import KeyboardUpdateService
+            KeyboardUpdateService.schedule_keyboard_updates_for_game(game_id)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при запуске игры {game_id}: {e}")
+            return False
     
     @staticmethod
     def start_game(game_id: int, start_type: str = "manual") -> bool:

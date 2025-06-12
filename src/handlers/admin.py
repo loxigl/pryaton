@@ -21,7 +21,6 @@ from src.keyboards.reply import get_district_keyboard, get_contextual_main_keybo
 # Новые импорты для работы с зонами
 from src.services.location_service import LocationService
 from src.services.zone_management_service import ZoneManagementService
-
 # Новые импорты для настроек и ручного управления
 from src.services.game_settings_service import GameSettingsService
 from src.services.manual_game_control_service import ManualGameControlService

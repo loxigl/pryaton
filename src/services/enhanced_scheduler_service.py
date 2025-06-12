@@ -14,6 +14,7 @@ from src.models.scheduled_event import ScheduledEvent, EventType
 from src.services.user_service import UserService
 from src.services.game_service import GameService
 from src.services.event_persistence_service import EventPersistenceService
+from src.services.settings_service import SettingsService
 
 # Определяем временную зону (по умолчанию московское время)
 DEFAULT_TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Europe/Moscow"))
@@ -581,9 +582,11 @@ class EnhancedSchedulerService:
             else:
                 start_text = f"🚀 <b>Игра началась!</b>\n\n"
             
+            current_time = datetime.now()
+            
             start_text += (
                 f"🎮 <b>Игра:</b> {game.district}\n"
-                f"⏰ <b>Время начала:</b> {datetime.now().strftime('%H:%M')}\n\n"
+                f"⏰ <b>Время начала:</b> {self.format_msk_time(current_time)}\n\n"
                 f"🏁 <b>Фаза пряток началась!</b>\n\n"
             )
             
@@ -600,11 +603,12 @@ class EnhancedSchedulerService:
             seekers_text = start_text + (
                 f"🔍 <b>Ваша роль: Искатель</b>\n\n"
                 f"Водители прячутся {self.hiding_time} минут.\n"
-                f"📍 Можете отправлять геолокацию для отслеживания.\n"
-                f"⏰ Поиск начнется через {self.hiding_time} минут!\n\n"
-                f"Когда начнется поиск, фотографируйте найденные машины."
+                f"⏰ Фаза поиска начнется в {self.format_msk_time(current_time + timedelta(minutes=self.hiding_time))}\n\n"
+                f"🚧 <b>Пожалуйста, не подглядывайте за водителями!</b>\n"
+                f"Для честной игры не следите за водителями во время пряток."
             )
             
+            # Отправляем уведомления участникам
             sent_count = 0
             for participant in game.participants:
                 user, _ = UserService.get_user_by_id(participant.user_id)
@@ -622,9 +626,30 @@ class EnhancedSchedulerService:
                         )
                         sent_count += 1
                     except Exception as e:
-                        logger.error(f"Ошибка уведомления о начале игры пользователю {user.telegram_id}: {e}")
+                        logger.error(f"Ошибка уведомления о старте пользователю {user.telegram_id}: {e}")
             
-            logger.info(f"Отправлены уведомления о начале игры {game_id} ({sent_count} участников)")
+            # Уведомляем админов
+            admins = UserService.get_admin_users()
+            for admin in admins:
+                try:
+                    admin_text = (
+                        f"👨‍💼 <b>Админ-уведомление: Игра началась!</b>\n\n"
+                        f"🎮 <b>Игра:</b> {game.district} (ID: {game.id})\n"
+                        f"⏰ <b>Время:</b> {self.format_msk_time(current_time)}\n"
+                        f"👥 <b>Участников:</b> {len(game.participants)}\n"
+                        f"🚗 <b>Водителей:</b> {sum(1 for p in game.participants if p.role == GameRole.DRIVER)}\n\n"
+                        f"📊 Отправлено уведомлений: {sent_count}"
+                    )
+                    
+                    await self.bot.send_message(
+                        chat_id=admin.telegram_id,
+                        text=admin_text,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка уведомления админа {admin.telegram_id}: {e}")
+            
+            logger.info(f"Отправлены уведомления о начале игры для игры {game_id} ({sent_count} участников)")
             
         except Exception as e:
             logger.error(f"Ошибка уведомления о начале игры {game_id}: {e}")
@@ -674,12 +699,14 @@ class EnhancedSchedulerService:
             hiding_stats = GameService.get_hiding_stats(game_id)
             all_hidden = hiding_stats.get('all_hidden', False)
             
+            current_time = datetime.now()
+            
             # Формируем текст уведомления
             if all_hidden:
                 phase_text = (
                     f"🔍 <b>Фаза поиска началась!</b>\n\n"
                     f"🎮 <b>Игра:</b> {game.district}\n"
-                    f"⏰ <b>Время:</b> {datetime.now().strftime('%H:%M')}\n\n"
+                    f"⏰ <b>Время:</b> {self.format_msk_time(current_time)}\n\n"
                     f"✅ <b>Все водители спрятались!</b>\n"
                     f"🚗 Водителей: {hiding_stats['total_drivers']}\n\n"
                 )
@@ -688,7 +715,7 @@ class EnhancedSchedulerService:
                 phase_text = (
                     f"🔍 <b>Фаза поиска началась!</b>\n\n"
                     f"🎮 <b>Игра:</b> {game.district}\n"
-                    f"⏰ <b>Время:</b> {datetime.now().strftime('%H:%M')}\n\n"
+                    f"⏰ <b>Время:</b> {self.format_msk_time(current_time)}\n\n"
                     f"⚠️ <b>Внимание!</b> {not_hidden_count} водителей не успели спрятаться.\n\n"
                 )
             
@@ -737,7 +764,7 @@ class EnhancedSchedulerService:
                     admin_text = (
                         f"👨‍💼 <b>Админ-уведомление: Началась фаза поиска</b>\n\n"
                         f"🎮 <b>Игра:</b> {game.district} (ID: {game.id})\n"
-                        f"⏰ <b>Время:</b> {datetime.now().strftime('%H:%M')}\n"
+                        f"⏰ <b>Время:</b> {self.format_msk_time(current_time)}\n"
                         f"🚗 <b>Водителей:</b> {hiding_stats['total_drivers']}\n"
                         f"✅ <b>Спрятались:</b> {hiding_stats['hidden_count']}\n"
                         f"❌ <b>Не спрятались:</b> {hiding_stats['not_hidden_count']}\n\n"
@@ -790,6 +817,12 @@ class EnhancedSchedulerService:
             
         except Exception as e:
             logger.error(f"Ошибка уведомления о завершении игры {game_id}: {e}")
+
+    # Функция для форматирования времени по МСК
+    def format_msk_time(self, dt: datetime) -> str:
+        """Форматирует время в МСК"""
+        msk_time = dt.astimezone(self.msk_timezone)
+        return msk_time.strftime('%H:%M')
 
 
 # Глобальный экземпляр планировщика

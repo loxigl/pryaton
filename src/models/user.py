@@ -23,6 +23,11 @@ class User(Base):
     district = Column(String, nullable=False)
     default_role = Column(Enum(UserRole), default=UserRole.PLAYER)
     
+    # Новые поля для автомобиля
+    car_brand = Column(String)  # Марка автомобиля
+    car_color = Column(String)  # Цвет автомобиля
+    car_number = Column(String)  # Гос. номер автомобиля
+    
     # Флаг согласия с правилами
     rules_accepted = Column(Boolean, default=False)
     

@@ -36,27 +36,38 @@ class UserService:
         phone: Optional[str],
         district: str,
         default_role: UserRole,
-        rules_accepted: bool = False
-    ) -> User:
+        car_brand: Optional[str] = None,
+        car_color: Optional[str] = None,
+        car_number: Optional[str] = None,
+        rules_accepted: bool = True
+    ) -> bool:
         """Создание нового пользователя"""
-        db_generator = get_db()
-        db = next(db_generator)
-        
-        user = User(
-            telegram_id=telegram_id,
-            username=username,
-            name=name,
-            phone=phone,
-            district=district,
-            default_role=default_role,
-            rules_accepted=rules_accepted
-        )
-        
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        
-        return user
+        try:
+            db_generator = get_db()
+            db = next(db_generator)
+            
+            user = User(
+                telegram_id=telegram_id,
+                username=username,
+                name=name,
+                phone=phone,
+                district=district,
+                default_role=default_role,
+                car_brand=car_brand,
+                car_color=car_color,
+                car_number=car_number,
+                rules_accepted=rules_accepted
+            )
+            
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            
+            logger.info(f"Создан новый пользователь: {user.id} ({user.name})")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при создании пользователя: {e}")
+            return False
     
     @staticmethod
     def update_user(user_id: int, **kwargs) -> Optional[User]:
