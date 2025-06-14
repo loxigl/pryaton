@@ -101,6 +101,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif data == "confirm_reset_settings":
             await handle_confirm_reset_settings_callback(update, context)
         
+        # Обработка callback'ов редактирования профиля
+        elif data == "edit_profile":
+            await handle_edit_profile_callback(update, context)
+        elif data == "back_to_profile":
+            await handle_back_to_profile_callback(update, context)
+        elif data.startswith("edit_profile_"):
+            await handle_edit_profile_field_callback(update, context)
+        elif data.startswith("confirm_profile_"):
+            await handle_confirm_profile_edit_callback(update, context)
+        elif data == "cancel_profile_edit":
+            await handle_cancel_profile_edit_callback(update, context)
+        elif data.startswith("select_role_"):
+            await handle_select_role_callback(update, context)
+        elif data.startswith("select_district_"):
+            await handle_select_district_callback(update, context)
+        
         # Обработка других callback'ов геолокации
         elif data == "cancel_location":
             await query.answer("Отправка геолокации отменена.")
@@ -1354,6 +1370,308 @@ async def handle_back_to_admin_callback(update: Update, context: ContextTypes.DE
     await query.edit_message_text(
         admin_text,
         parse_mode="HTML"
+    )
+
+async def handle_edit_profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик callback'а редактирования профиля"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    user, _ = UserService.get_user_by_telegram_id(user_id)
+    
+    if not user:
+        await query.edit_message_text("❌ Пользователь не найден")
+        return
+    
+    from src.keyboards.inline import get_profile_edit_keyboard
+    
+    edit_text = (
+        "✏️ <b>Редактирование профиля</b>\n\n"
+        "Выберите поле для редактирования:\n\n"
+        "👤 <b>Текущие данные:</b>\n"
+        f"• Имя: {user.name}\n"
+        f"• Телефон: {user.phone or 'не указан'}\n"
+        f"• Район: {user.district}\n"
+        f"• Роль: {user.default_role.value}\n"
+        f"• Марка авто: {user.car_brand or 'не указана'}\n"
+        f"• Цвет авто: {user.car_color or 'не указан'}\n"
+        f"• Гос. номер: {user.car_number or 'не указан'}\n"
+    )
+    
+    await query.edit_message_text(
+        edit_text,
+        parse_mode="HTML",
+        reply_markup=get_profile_edit_keyboard()
+    )
+
+async def handle_back_to_profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик возврата к профилю"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    user, participations = UserService.get_user_by_telegram_id(user_id)
+    
+    if not user:
+        await query.edit_message_text("❌ Пользователь не найден")
+        return
+    
+    # Импортируем функцию для отображения роли
+    from src.handlers.text_messages import get_role_text
+    
+    # Формируем информацию о профиле (копируем логику из show_profile)
+    profile_text = (
+        f"👤 <b>Ваш профиль</b>\n\n"
+        f"<b>Имя:</b> {user.name}\n"
+        f"<b>Район:</b> {user.district}\n"
+        f"<b>Роль по умолчанию:</b> {get_role_text(user.default_role)}\n"
+    )
+    
+    if user.phone:
+        profile_text += f"<b>Телефон:</b> {user.phone}\n"
+    
+    # Добавляем информацию о машине
+    profile_text += f"\n🚗 <b>Информация о машине:</b>\n"
+    if user.car_brand:
+        profile_text += f"<b>Марка:</b> {user.car_brand}\n"
+    else:
+        profile_text += f"<b>Марка:</b> не указана\n"
+    
+    if user.car_color:
+        profile_text += f"<b>Цвет:</b> {user.car_color}\n"
+    else:
+        profile_text += f"<b>Цвет:</b> не указан\n"
+    
+    if user.car_number:
+        profile_text += f"<b>Гос. номер:</b> {user.car_number}\n"
+    else:
+        profile_text += f"<b>Гос. номер:</b> не указан\n"
+    
+    # Добавляем статистику участия в играх
+    games_count = len(participations)
+    profile_text += f"\n<b>Участие в играх:</b> {games_count}"
+    
+    from src.keyboards.inline import get_profile_main_keyboard
+    
+    await query.edit_message_text(
+        profile_text,
+        parse_mode="HTML",
+        reply_markup=get_profile_main_keyboard()
+    )
+
+async def handle_edit_profile_field_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик редактирования конкретного поля профиля"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    field = query.data.replace("edit_profile_", "")
+    
+    # Сохраняем поле для редактирования в context
+    context.user_data["editing_field"] = field
+    
+    field_names = {
+        "name": "имя",
+        "phone": "телефон",
+        "district": "район",
+        "role": "роль по умолчанию",
+        "car_brand": "марку автомобиля",
+        "car_color": "цвет автомобиля",
+        "car_number": "гос. номер"
+    }
+    
+    field_name = field_names.get(field, "поле")
+    
+    if field == "role":
+        # Для роли показываем кнопки выбора
+        from src.keyboards.inline import get_role_selection_keyboard
+        
+        role_text = (
+            f"🎭 <b>Выбор роли по умолчанию</b>\n\n"
+            f"Выберите роль из списка ниже:"
+        )
+        
+        await query.edit_message_text(
+            role_text,
+            parse_mode="HTML",
+            reply_markup=get_role_selection_keyboard()
+        )
+    elif field == "district":
+        # Для района показываем кнопки выбора
+        from src.keyboards.inline import get_district_selection_keyboard
+        
+        district_text = (
+            f"🏘 <b>Выбор района</b>\n\n"
+            f"Выберите район из списка ниже:"
+        )
+        
+        await query.edit_message_text(
+            district_text,
+            parse_mode="HTML",
+            reply_markup=get_district_selection_keyboard()
+        )
+    else:
+        # Для остальных полей простое текстовое поле
+        edit_text = (
+            f"✏️ <b>Редактирование: {field_name}</b>\n\n"
+            f"📝 Введите новое значение для поля '{field_name}':"
+        )
+        
+        from src.keyboards.inline import get_profile_back_keyboard
+        
+        await query.edit_message_text(
+            edit_text,
+            parse_mode="HTML",
+            reply_markup=get_profile_back_keyboard()
+        )
+
+async def handle_confirm_profile_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик подтверждения изменений профиля"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    field = query.data.replace("confirm_profile_", "")
+    new_value = context.user_data.get("new_value")
+    
+    if not new_value:
+        await query.edit_message_text(
+            "❌ Ошибка: новое значение не найдено",
+            reply_markup=None
+        )
+        return
+    
+    # Обновляем поле пользователя
+    user, _ = UserService.get_user_by_telegram_id(user_id)
+    if not user:
+        await query.edit_message_text("❌ Пользователь не найден")
+        return
+    
+    # Подготавливаем данные для обновления
+    update_data = {}
+    
+    if field == "role":
+        from src.services.settings_service import SettingsService
+        role_enum = SettingsService.get_role_from_display_name(new_value)
+        if role_enum:
+            update_data["default_role"] = role_enum
+        else:
+            await query.edit_message_text(
+                f"❌ Неверная роль: {new_value}",
+                reply_markup=None
+            )
+            return
+    else:
+        update_data[field] = new_value
+    
+    # Обновляем пользователя
+    updated_user = UserService.update_user(user.id, **update_data)
+    
+    if updated_user:
+        field_names = {
+            "name": "Имя",
+            "phone": "Телефон",
+            "district": "Район",
+            "role": "Роль",
+            "car_brand": "Марка автомобиля",
+            "car_color": "Цвет автомобиля",
+            "car_number": "Гос. номер"
+        }
+        
+        field_name = field_names.get(field, "Поле")
+        
+        success_text = (
+            f"✅ <b>Поле обновлено!</b>\n\n"
+            f"<b>{field_name}:</b> {new_value}\n\n"
+            f"Изменения сохранены в вашем профиле."
+        )
+        
+        from src.keyboards.inline import get_profile_back_keyboard
+        
+        await query.edit_message_text(
+            success_text,
+            parse_mode="HTML",
+            reply_markup=get_profile_back_keyboard()
+        )
+        
+        # Очищаем временные данные
+        context.user_data.pop("editing_field", None)
+        context.user_data.pop("new_value", None)
+    else:
+        await query.edit_message_text(
+            "❌ Ошибка при обновлении профиля",
+            reply_markup=None
+        )
+
+async def handle_cancel_profile_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик отмены редактирования профиля"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Очищаем временные данные
+    context.user_data.pop("editing_field", None)
+    context.user_data.pop("new_value", None)
+    
+    await query.edit_message_text(
+        "❌ Редактирование отменено",
+        reply_markup=None
+    )
+
+async def handle_select_role_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик выбора роли через inline кнопку"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    selected_role = query.data.replace("select_role_", "")
+    
+    # Сохраняем выбранную роль и поле для редактирования
+    context.user_data["editing_field"] = "role"
+    context.user_data["new_value"] = selected_role
+    
+    # Показываем подтверждение
+    confirm_text = (
+        f"✅ <b>Подтверждение изменений</b>\n\n"
+        f"<b>Поле:</b> Роль по умолчанию\n"
+        f"<b>Новое значение:</b> {selected_role}\n\n"
+        f"Подтвердите изменение или отмените его."
+    )
+    
+    from src.keyboards.inline import get_profile_field_confirm_keyboard
+    
+    await query.edit_message_text(
+        confirm_text,
+        parse_mode="HTML",
+        reply_markup=get_profile_field_confirm_keyboard("role")
+    )
+
+async def handle_select_district_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик выбора района через inline кнопку"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    selected_district = query.data.replace("select_district_", "")
+    
+    # Сохраняем выбранный район и поле для редактирования
+    context.user_data["editing_field"] = "district"
+    context.user_data["new_value"] = selected_district
+    
+    # Показываем подтверждение
+    confirm_text = (
+        f"✅ <b>Подтверждение изменений</b>\n\n"
+        f"<b>Поле:</b> Район\n"
+        f"<b>Новое значение:</b> {selected_district}\n\n"
+        f"Подтвердите изменение или отмените его."
+    )
+    
+    from src.keyboards.inline import get_profile_field_confirm_keyboard
+    
+    await query.edit_message_text(
+        confirm_text,
+        parse_mode="HTML",
+        reply_markup=get_profile_field_confirm_keyboard("district")
     )
 
 def get_callback_handler_patterns():

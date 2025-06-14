@@ -361,4 +361,65 @@ def get_participant_actions_keyboard(game_id, participant_id, participant_info):
     )])
     
     return InlineKeyboardMarkup(buttons)
+
+def get_profile_main_keyboard():
+    """Основная inline клавиатура для профиля"""
+    buttons = [
+        [InlineKeyboardButton(text="✏️ Редактировать профиль", callback_data="edit_profile")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_profile_edit_keyboard():
+    """Inline клавиатура для редактирования профиля"""
+    buttons = [
+        [InlineKeyboardButton(text="👤 Редактировать имя", callback_data="edit_profile_name")],
+        [InlineKeyboardButton(text="📱 Редактировать телефон", callback_data="edit_profile_phone")],
+        [InlineKeyboardButton(text="🏘 Редактировать район", callback_data="edit_profile_district")],
+        [InlineKeyboardButton(text="🎭 Редактировать роль", callback_data="edit_profile_role")],
+        [InlineKeyboardButton(text="🚗 Марка автомобиля", callback_data="edit_profile_car_brand")],
+        [InlineKeyboardButton(text="🎨 Цвет автомобиля", callback_data="edit_profile_car_color")],
+        [InlineKeyboardButton(text="🔢 Гос. номер", callback_data="edit_profile_car_number")],
+        [InlineKeyboardButton(text="◀️ Назад к профилю", callback_data="back_to_profile")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_profile_field_confirm_keyboard(field):
+    """Клавиатура подтверждения изменения поля профиля"""
+    buttons = [
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_profile_{field}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_profile_edit")],
+        [InlineKeyboardButton(text="◀️ К редактированию", callback_data="edit_profile")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_profile_back_keyboard():
+    """Клавиатура для возврата к профилю"""
+    buttons = [
+        [InlineKeyboardButton(text="◀️ Назад к профилю", callback_data="back_to_profile")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_role_selection_keyboard():
+    """Inline клавиатура для выбора роли"""
+    from src.services.settings_service import SettingsService
+    available_roles = SettingsService.get_available_roles()
+    
+    buttons = []
+    for role in available_roles:
+        buttons.append([InlineKeyboardButton(text=role, callback_data=f"select_role_{role}")])
+    
+    buttons.append([InlineKeyboardButton(text="◀️ Назад к редактированию", callback_data="edit_profile")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_district_selection_keyboard():
+    """Inline клавиатура для выбора района"""
+    from src.services.settings_service import SettingsService
+    available_districts = SettingsService.get_districts()
+    
+    buttons = []
+    for district in available_districts:
+        buttons.append([InlineKeyboardButton(text=district, callback_data=f"select_district_{district}")])
+    
+    buttons.append([InlineKeyboardButton(text="◀️ Назад к редактированию", callback_data="edit_profile")])
+    return InlineKeyboardMarkup(buttons)
  

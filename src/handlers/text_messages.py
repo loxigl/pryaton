@@ -82,6 +82,12 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     logger.info(f"Пользователь {user_id} нажал кнопку: '{text}'")
     
+    # Проверяем, находится ли пользователь в процессе редактирования профиля
+    editing_field = context.user_data.get("editing_field")
+    if editing_field:
+        await handle_profile_text_input(update, context, text, editing_field)
+        return
+    
     # Проверяем текст сообщения и вызываем соответствующий обработчик
     if text == "🎮 Доступные игры" or text == "🎲 Доступные игры":
         logger.info(f"Вызываем games_command для пользователя {user_id}")
@@ -195,14 +201,37 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if user.phone:
         profile_text += f"<b>Телефон:</b> {user.phone}\n"
     
+    # Добавляем информацию о машине
+    profile_text += f"\n🚗 <b>Информация о машине:</b>\n"
+    if user.car_brand:
+        profile_text += f"<b>Марка:</b> {user.car_brand}\n"
+    else:
+        profile_text += f"<b>Марка:</b> не указана\n"
+    
+    if user.car_color:
+        profile_text += f"<b>Цвет:</b> {user.car_color}\n"
+    else:
+        profile_text += f"<b>Цвет:</b> не указан\n"
+    
+    if user.car_number:
+        profile_text += f"<b>Гос. номер:</b> {user.car_number}\n"
+    else:
+        profile_text += f"<b>Гос. номер:</b> не указан\n"
+    
     # Добавляем статистику участия в играх
     games_count = len(participations)
     profile_text += f"\n<b>Участие в играх:</b> {games_count}"
     
+    # Импортируем inline клавиатуру
+    from src.keyboards.inline import get_profile_main_keyboard
+    
+    # Создаем inline клавиатуру для профиля
+    inline_keyboard = get_profile_main_keyboard()
+    
     await update.message.reply_text(
         profile_text,
         parse_mode="HTML",
-        reply_markup=get_contextual_main_keyboard(user_id)
+        reply_markup=inline_keyboard
     )
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -522,6 +551,107 @@ async def notify_participants_about_found_driver(context: ContextTypes.DEFAULT_T
                     
     except Exception as e:
         logger.error(f"Ошибка уведомления участников: {e}")
+
+async def handle_profile_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, field: str) -> None:
+    """Обработчик текстового ввода при редактировании профиля"""
+    user_id = update.effective_user.id
+    
+    # Валидация введенных данных
+    # Роль и район теперь выбираются через inline кнопки, поэтому их текстовая валидация не нужна
+    if field == "phone":
+        # Базовая валидация телефона
+        import re
+        phone_pattern = r'^[\+]?[0-9\s\-\(\)]{7,20}$'
+        if not re.match(phone_pattern, text):
+            error_text = (
+                f"❌ <b>Неверный формат телефона</b>\n\n"
+                f"Пожалуйста, введите номер телефона в правильном формате:\n"
+                f"• +7 (123) 456-78-90\n"
+                f"• 8 123 456 78 90\n"
+                f"• 1234567890\n\n"
+                f"📝 Введите номер телефона:"
+            )
+            
+            from src.keyboards.inline import get_profile_back_keyboard
+            
+            await update.message.reply_text(
+                error_text,
+                parse_mode="HTML",
+                reply_markup=get_profile_back_keyboard()
+            )
+            return
+    elif field == "name":
+        # Валидация имени
+        if len(text.strip()) < 2:
+            error_text = (
+                f"❌ <b>Слишком короткое имя</b>\n\n"
+                f"Имя должно содержать не менее 2 символов.\n\n"
+                f"📝 Введите ваше имя:"
+            )
+            
+            from src.keyboards.inline import get_profile_back_keyboard
+            
+            await update.message.reply_text(
+                error_text,
+                parse_mode="HTML",
+                reply_markup=get_profile_back_keyboard()
+            )
+            return
+    elif field in ["car_brand", "car_color", "car_number"]:
+        # Валидация автомобильных данных
+        if len(text.strip()) < 1:
+            field_names = {
+                "car_brand": "марка автомобиля",
+                "car_color": "цвет автомобиля",
+                "car_number": "гос. номер"
+            }
+            field_name = field_names.get(field, "поле")
+            
+            error_text = (
+                f"❌ <b>Пустое поле</b>\n\n"
+                f"Пожалуйста, введите {field_name}.\n\n"
+                f"📝 Введите {field_name}:"
+            )
+            
+            from src.keyboards.inline import get_profile_back_keyboard
+            
+            await update.message.reply_text(
+                error_text,
+                parse_mode="HTML",
+                reply_markup=get_profile_back_keyboard()
+            )
+            return
+    
+    # Сохраняем новое значение
+    context.user_data["new_value"] = text.strip()
+    
+    # Показываем подтверждение
+    field_names = {
+        "name": "Имя",
+        "phone": "Телефон",
+        "district": "Район",
+        "role": "Роль по умолчанию",
+        "car_brand": "Марка автомобиля",
+        "car_color": "Цвет автомобиля",
+        "car_number": "Гос. номер"
+    }
+    
+    field_name = field_names.get(field, "Поле")
+    
+    confirm_text = (
+        f"✅ <b>Подтверждение изменений</b>\n\n"
+        f"<b>Поле:</b> {field_name}\n"
+        f"<b>Новое значение:</b> {text}\n\n"
+        f"Подтвердите изменение или отмените его."
+    )
+    
+    from src.keyboards.inline import get_profile_field_confirm_keyboard
+    
+    await update.message.reply_text(
+        confirm_text,
+        parse_mode="HTML",
+        reply_markup=get_profile_field_confirm_keyboard(field)
+    )
 
 # Обработчик всех текстовых сообщений
 text_message_handler = MessageHandler(
