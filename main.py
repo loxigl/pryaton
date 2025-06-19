@@ -109,6 +109,16 @@ async def main():
     
     # Создание экземпляра приложения
     application = Application.builder().token(TOKEN).build()
+    original_process_update = application.process_update
+
+    async def process_update_with_metrics(update):
+        start_time = time.time()
+        try:
+            return await original_process_update(update)
+        finally:
+            metrics_service.observe_latency(time.time() - start_time)
+
+    application.process_update = process_update_with_metrics
     
     # Инициализация улучшенного планировщика задач
     scheduler = init_enhanced_scheduler(application)
@@ -201,6 +211,7 @@ async def main():
         # Остановка планировщика
         scheduler.shutdown()
         metrics_service.update_scheduler_jobs(0)
+        metrics_service.stop()
         
         await application.updater.stop()
         await application.stop()

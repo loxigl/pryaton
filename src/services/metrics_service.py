@@ -1,6 +1,9 @@
-from prometheus_client import start_http_server, Gauge, Counter
+from prometheus_client import start_http_server, Gauge, Counter, Summary
 from loguru import logger
 import os
+import psutil
+import threading
+import time
 from typing import Dict
 
 from src.services.monitoring_service import MonitoringService
@@ -20,6 +23,20 @@ class MetricsService:
             "Number of scheduled jobs",
         )
         self.errors = Counter("pryton_errors_total", "Total bot errors")
+        self.request_latency = Summary(
+            "pryton_request_latency_seconds",
+            "Time spent processing updates",
+        )
+        self.cpu_usage = Gauge(
+            "pryton_cpu_usage_percent",
+            "CPU usage percentage",
+        )
+        self.memory_usage = Gauge(
+            "pryton_memory_usage_bytes",
+            "Memory usage in bytes",
+        )
+        self._stop_event = threading.Event()
+        self._system_thread = None
         self.port = int(os.getenv("METRICS_PORT", "8000"))
 
     def start(self) -> None:
@@ -27,6 +44,10 @@ class MetricsService:
         start_http_server(self.port)
         logger.info(f"Metrics server started on port {self.port}")
         self.update_games_metrics()
+        self._system_thread = threading.Thread(
+            target=self._system_metrics_loop, daemon=True
+        )
+        self._system_thread.start()
 
     def update_games_metrics(self) -> None:
         """Update gauges for games"""
@@ -39,6 +60,21 @@ class MetricsService:
 
     def record_error(self) -> None:
         self.errors.inc()
+
+    def observe_latency(self, duration: float) -> None:
+        self.request_latency.observe(duration)
+
+    def update_system_metrics(self) -> None:
+        self.cpu_usage.set(psutil.cpu_percent())
+        self.memory_usage.set(psutil.virtual_memory().used)
+
+    def _system_metrics_loop(self) -> None:
+        while not self._stop_event.is_set():
+            self.update_system_metrics()
+            time.sleep(5)
+
+    def stop(self) -> None:
+        self._stop_event.set()
 
 
 metrics_service = MetricsService()

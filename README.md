@@ -137,6 +137,13 @@ python main.py
 2. Prometheus собирает эти данные и отправляет алерты в Alertmanager.
 3. Grafana подключается к Prometheus для визуализации статистики.
 
+Экспортируются следующие основные метрики:
+- `pryton_games_status_total` — количество игр по статусам;
+- `pryton_scheduler_jobs_total` — активные задания планировщика;
+- `pryton_errors_total` — число ошибок бота;
+- `pryton_request_latency_seconds` — время обработки обновлений;
+- `pryton_cpu_usage_percent` и `pryton_memory_usage_bytes` — загрузка сервера.
+
 После запуска `./start.sh` сервисы будут доступны на портах:
 
 - `9090` - интерфейс Prometheus
