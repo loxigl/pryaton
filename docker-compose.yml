@@ -51,6 +51,37 @@ services:
     networks:
       - pryton_network
 
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - "9090:9090"
+    networks:
+      - pryton_network
+
+  alertmanager:
+    image: prom/alertmanager
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    ports:
+      - "9093:9093"
+    networks:
+      - pryton_network
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - pryton_network
+
 volumes:
   postgres_data:
 
