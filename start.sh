@@ -28,6 +28,11 @@ GAME_ZONE_RADIUS=1000
 HIDING_TIME=30
 # За сколько минут отправлять напоминания об игре
 REMINDER_BEFORE_GAME=60,24,5
+# Порт для экспозиции метрик Prometheus
+METRICS_PORT=8000
+
+# DSN для Sentry (опционально)
+SENTRY_DSN=
 EOF
     echo "Создан файл .env. Пожалуйста, отредактируйте его и замените 'your_telegram_bot_token_here' на реальный токен бота."
     echo "После редактирования запустите скрипт повторно."

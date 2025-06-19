@@ -8,6 +8,8 @@ loguru==0.7.2
 APScheduler==3.10.4
 pillow==10.0.1
 pytest==7.4.2
-pytest-asyncio==0.21.1 
+pytest-asyncio==0.21.1
 watchdog
 psutil
+prometheus-client==0.17.1
+sentry-sdk==1.39.1

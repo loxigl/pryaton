@@ -6,6 +6,7 @@ import signal
 from dotenv import load_dotenv
 from telegram.ext import Application, ConversationHandler, MessageHandler, filters
 from sqlalchemy import text
+import sentry_sdk
 
 from src.handlers.start import (
     start_handler, 
@@ -46,10 +47,15 @@ from src.utils.logger import setup_logger
 from src.models import create_tables
 from src.models.base import engine
 from src.services.enhanced_scheduler_service import init_enhanced_scheduler
+from src.services.metrics_service import metrics_service
 
 # Загрузка переменных окружения
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+
+if SENTRY_DSN:
+    sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=1.0)
 
 if not TOKEN:
     raise ValueError("Не найден токен Telegram бота. Укажите TELEGRAM_TOKEN в .env файле")
@@ -97,6 +103,9 @@ async def main():
     # Создание таблиц в БД, если их нет
     create_tables()
     logger.info("База данных инициализирована")
+
+    # Запуск сервиса метрик
+    metrics_service.start()
     
     # Создание экземпляра приложения
     application = Application.builder().token(TOKEN).build()
@@ -175,6 +184,7 @@ async def main():
     
     # Запуск планировщика
     scheduler.start()
+    metrics_service.update_scheduler_jobs(len(scheduler.scheduler.get_jobs()))
     
     logger.info("Бот успешно запущен")
     
@@ -190,6 +200,7 @@ async def main():
         
         # Остановка планировщика
         scheduler.shutdown()
+        metrics_service.update_scheduler_jobs(0)
         
         await application.updater.stop()
         await application.stop()
@@ -206,4 +217,6 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         logging.info("Бот остановлен")
     except Exception as e:
-        logging.error(f"Ошибка: {e}", exc_info=True) 
+        logging.error(f"Ошибка: {e}", exc_info=True)
+        metrics_service.record_error()
+
