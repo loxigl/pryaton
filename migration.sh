@@ -16,7 +16,7 @@ if [ $# -eq 0 ]; then
 fi
 
 # Проверка, запущены ли контейнеры
-if ! docker-compose ps | grep -q "bot"; then
+if ! docker compose ps | grep -q "bot"; then
     echo "Контейнеры не запущены. Сначала запустите приложение: ./start.sh"
     exit 1
 fi
@@ -27,7 +27,7 @@ shift
 case $COMMAND in
     init)
         echo "Инициализация директории миграций..."
-        docker-compose exec bot alembic init -t generic alembic
+        docker compose exec bot alembic init -t generic alembic
         ;;
     create)
         if [ $# -eq 0 ]; then
@@ -36,7 +36,7 @@ case $COMMAND in
             exit 1
         fi
         echo "Создание пустой миграции '$1'..."
-        docker-compose exec bot alembic revision -m "$1"
+        docker compose exec bot alembic revision -m "$1"
         ;;
     revision)
         if [ $# -eq 0 ]; then
@@ -45,37 +45,37 @@ case $COMMAND in
             exit 1
         fi
         echo "Создание автоматической ревизии '$1'..."
-        docker-compose exec bot alembic revision --autogenerate -m "$1"
+        docker compose exec bot alembic revision --autogenerate -m "$1"
         ;;
     upgrade)
         if [ $# -eq 0 ]; then
             echo "Применение всех миграций..."
-            docker-compose exec bot alembic upgrade head
+            docker compose exec bot alembic upgrade head
         else
             echo "Применение $1 миграций..."
-            docker-compose exec bot alembic upgrade $1
+            docker compose exec bot alembic upgrade $1
         fi
         ;;
     downgrade)
         if [ $# -eq 0 ]; then
             echo "Откат последней миграции..."
-            docker-compose exec bot alembic downgrade -1
+            docker compose exec bot alembic downgrade -1
         else
             echo "Откат на $1 миграций назад..."
-            docker-compose exec bot alembic downgrade $1
+            docker compose exec bot alembic downgrade $1
         fi
         ;;
     history)
         echo "История миграций:"
-        docker-compose exec bot alembic history
+        docker compose exec bot alembic history
         ;;
     current)
         echo "Текущая ревизия:"
-        docker-compose exec bot alembic current
+        docker compose exec bot alembic current
         ;;
     heads)
         echo "Последние ревизии:"
-        docker-compose exec bot alembic heads
+        docker compose exec bot alembic heads
         ;;
     help)
         echo "Использование: $0 [команда]"

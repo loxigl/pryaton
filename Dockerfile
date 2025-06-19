@@ -25,4 +25,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD python -c "from sqlalchemy import create_engine; import os; engine = create_engine(os.getenv('DATABASE_URL')); engine.connect()"
 
 # Запуск бота
-CMD ["./run.sh"]
+CMD ["./run_prod.sh"]
