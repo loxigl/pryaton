@@ -1,0 +1,35 @@
+groups:
+- name: server_overload
+  rules:
+
+  # 1) Высокая загрузка CPU > 80% в течение 5 минут
+  - alert: HighCPUUsage
+    expr: pryton_cpu_usage_percent > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "CPU перегружен ({{ printf \"%.0f\" $value }}%)"
+      description: "CPU > 80% удерживается более 5 минут."
+
+  # 2) Память > 80% от 2 GiB за 5 минут
+  - alert: HighMemoryUsage
+    # сразу в процентах: (использование / 2GiB) * 100
+    expr: (pryton_memory_usage_bytes / (2 * 1024 * 1024 * 1024) * 100) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Память перегружена ({{ printf \"%.2f\" $value }}%)"
+      description: "RAM > 80% (~1.6 GiB) удерживается более 5 минут."
+
+  # 3) Диск > 80% на / за 10 минут
+  - alert: HighDiskUsage
+    # и тут сразу считаем в процентах
+    expr: ((node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} * 100) > 80
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Диск почти полон ({{ printf \"%.1f\" $value }}%)"
+      description: "Использование / > 80% удерживается более 10 минут."

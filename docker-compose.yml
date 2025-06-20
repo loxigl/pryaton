@@ -55,6 +55,7 @@ services:
     image: prom/prometheus
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
     ports:
@@ -79,11 +80,48 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana 
+    networks:
+      - pryton_network
+    
+  loki:
+    image: grafana/loki:2.8.2
+    command: -config.file=/etc/loki/local-config.yaml
+    user: root
+    volumes:
+      - ./monitoring/loki/local-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+      - ./logs:/var/log/pryton
+      - loki_val:/wal
+    ports:
+      - "3100:3100"
+      - "7946:7946"
+      - "7946:7946/udp"
+    networks:
+      - pryton_network
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    networks:
+      - pryton_network
+
+  promtail:
+    build: ./monitoring/promtail
+    volumes:
+      - ./monitoring/promtail/config.yaml:/etc/promtail/config.yaml
+      - ./logs:/var/log/pryton  
+    command: -config.file=/etc/promtail/config.yaml
     networks:
       - pryton_network
 
 volumes:
   postgres_data:
+  grafana_data:
+  loki_data:
+  loki_val:
 
 networks:
   pryton_network:

@@ -10,6 +10,7 @@ from telegram.ext import (
 from datetime import datetime, timedelta
 import re
 from loguru import logger
+from telegram.error import BadRequest
 
 from src.services.user_service import UserService
 from src.services.game_service import GameService
@@ -284,6 +285,8 @@ async def back_to_games_button(update: Update, context: CallbackContext) -> None
     
     telegram_id = query.from_user.id
     logger.info(f"Пользователь {telegram_id} нажал кнопку 'Назад к списку игр'")
+
+    
     
     # Получаем список предстоящих игр
     upcoming_games = GameService.get_upcoming_games(limit=5)
@@ -298,13 +301,20 @@ async def back_to_games_button(update: Update, context: CallbackContext) -> None
     logger.info(f"Показываем {len(upcoming_games)} доступных игр пользователю {telegram_id}")
     # Создаем клавиатуру со списком игр
     keyboard = get_game_list_keyboard(upcoming_games)
-    
-    await query.edit_message_text(
-        "📋 <b>Список доступных игр</b>\n\n"
-        "Выберите игру из списка для получения подробной информации и возможности записаться:",
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
+    try:
+        await query.edit_message_text(
+            "📋 <b>Список доступных игр</b>\n\n"
+            "Выберите игру из списка для получения подробной информации и возможности записаться:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    except BadRequest as err:
+        # Telegram always raises this if nothing changed;
+        # ignore it and move on
+        if "Message is not modified" in err.message:
+            return
+        # any other BadRequest should bubble up
+        raise
 
 async def game_info_button(update: Update, context: CallbackContext) -> None:
     """Обработчик кнопки информации об игре (info_{game_id})"""

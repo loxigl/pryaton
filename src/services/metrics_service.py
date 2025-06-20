@@ -27,6 +27,11 @@ class MetricsService:
             "pryton_request_latency_seconds",
             "Time spent processing updates",
         )
+        self.request_count = Counter(
+            "pryton_request_count_total",
+            "Total number of requests",
+            ["update_type"],
+        )
         self.cpu_usage = Gauge(
             "pryton_cpu_usage_percent",
             "CPU usage percentage",
@@ -61,9 +66,6 @@ class MetricsService:
     def record_error(self) -> None:
         self.errors.inc()
 
-    def observe_latency(self, duration: float) -> None:
-        self.request_latency.observe(duration)
-
     def update_system_metrics(self) -> None:
         self.cpu_usage.set(psutil.cpu_percent())
         self.memory_usage.set(psutil.virtual_memory().used)
@@ -75,6 +77,17 @@ class MetricsService:
 
     def stop(self) -> None:
         self._stop_event.set()
+    def record_request(self, update_type: str) -> None:
+        try:
+            self.request_count.labels(update_type=update_type).inc()
+        except Exception as e:
+            logger.error(f"Не удалось записать request_count: {e}")
 
+    def observe_latency(self, duration: float) -> None:
+        try:
+            # у вас нет лейблов на Summary, поэтому просто наблюдаем
+            self.request_latency.observe(duration)
+        except Exception as e:
+            logger.error(f"Не удалось записать latency: {e}")
 
 metrics_service = MetricsService()

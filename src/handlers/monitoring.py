@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes, MessageHandler, filters, CallbackQueryHan
 from loguru import logger
 from datetime import datetime, timedelta
 import psutil
+from telegram.error import BadRequest
 
 from src.services.enhanced_scheduler_service import DEFAULT_TIMEZONE
 from src.services.user_service import UserService
@@ -324,12 +325,19 @@ async def show_recent_activities(update: Update, context: ContextTypes.DEFAULT_T
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+    except BadRequest as err:
+        # Telegram always raises this if nothing changed;
+        # ignore it and move on
+        if "Message is not modified" in err.message:
+            return
+        # any other BadRequest should bubble up
+        raise
     
     return MONITORING_MENU
 

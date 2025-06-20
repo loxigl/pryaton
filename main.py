@@ -1,4 +1,5 @@
 import asyncio
+from functools import wraps
 import logging
 import os
 import time
@@ -63,6 +64,50 @@ if not TOKEN:
 # Настройка логирования
 logger = setup_logger()
 
+def wrap_callback(fn, threshold: float):
+    @wraps(fn)
+    async def wrapper(update, context, *args, **kwargs):
+        start = time.perf_counter()
+        try:
+            return await fn(update, context, *args, **kwargs)
+        finally:
+            duration = time.perf_counter() - start
+            metrics_service.observe_latency(duration)
+            name = getattr(fn, "__name__", repr(fn))
+            user = update.effective_user.id if update.effective_user else "unknown"
+            if duration > threshold:
+                metrics_service.record_error()
+                logger.warning(f"⚠️ SLOW: {name} took {duration:.2f}s (user={user})")
+            else:
+                logger.info(f"{name} took {duration:.2f}s")
+    return wrapper
+
+def wrap_handler(handler, threshold: float):
+    handler.callback = wrap_callback(handler.callback, threshold)
+    return handler
+
+def wrap_all_handlers(application, threshold: float = 2.0):
+    """
+    Оборачиваем ВСЕ хендлеры, в том числе вложенные в ConversationHandler,
+    но меняем приватные списки _entry_points и _fallbacks, чтобы не ломать property.
+    """
+    for group, handlers in application.handlers.items():
+        for handler in handlers:
+            if isinstance(handler, ConversationHandler):
+                # оборачивам entry_points, fallbacks и states
+                handler._entry_points = [
+                    wrap_handler(h, threshold) for h in handler._entry_points
+                ]
+                # states — это обычный dict, можно менять через handler.states
+                for state, hlist in handler.states.items():
+                    handler.states[state] = [
+                        wrap_handler(h, threshold) for h in hlist
+                    ]
+                handler._fallbacks = [
+                    wrap_handler(h, threshold) for h in handler._fallbacks
+                ]
+            elif hasattr(handler, "callback"):
+                wrap_handler(handler, threshold)
 # Глобальная переменная для отслеживания состояния завершения
 should_exit = False
 scheduler = None
@@ -109,16 +154,7 @@ async def main():
     
     # Создание экземпляра приложения
     application = Application.builder().token(TOKEN).build()
-    original_process_update = application.process_update
 
-    async def process_update_with_metrics(update):
-        start_time = time.time()
-        try:
-            return await original_process_update(update)
-        finally:
-            metrics_service.observe_latency(time.time() - start_time)
-
-    application.process_update = process_update_with_metrics
     
     # Инициализация улучшенного планировщика задач
     scheduler = init_enhanced_scheduler(application)
@@ -187,8 +223,59 @@ async def main():
     # Он должен быть последним, чтобы не перехватывать команды
     application.add_handler(text_message_handler)
     
+    wrap_all_handlers(application,threshold=4.0)
+
+    from aiohttp import web
+
+    # Парсим список админов из ENV
+    ADMIN_USER_IDS = os.getenv("ADMIN_USER_IDS", "")
+    ADMIN_IDS = [int(x) for x in ADMIN_USER_IDS.split(",") if x]
+
+    async def alert_handler(request: web.Request) -> web.Response:
+        """
+        Ожидает JSON от Alertmanager (webhook_config),
+        рассылает текст админам в Telegram.
+        """
+        data = await request.json()
+        alerts = data.get("alerts", [])
+        lines = []
+        for a in alerts:
+            status = a.get("status", "")
+            name = a.get("labels", {}).get("alertname", "")
+            desc = a.get("annotations", {}).get("description", "")
+            # Вы можете брать summary / description по вкусу
+            lines.append(f"*[{status}]* _{name}_\n{desc}")
+        _text = "\n\n".join(lines) or "❗️ Пустой алерт"
+
+        # Шлём по каждому администратору
+        for uid in ADMIN_IDS:
+            try:
+                await application.bot.send_message(
+                    chat_id=uid,
+                    text=_text,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.error(f"Не удалось отправить алерт {uid}: {e}")
+
+        return web.Response(text="ok")
+
+    async def start_webhook(app: Application):
+        """
+        Запустим aiohttp на порту 8001
+        """
+        webapp = web.Application()
+        webapp.add_routes([web.post("/alert", alert_handler)])
+        runner = web.AppRunner(webapp)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("ALERT_WEBHOOK_PORT", "8001")))
+        await site.start()
+        logger.info("Alertmanager webhook listening on port %s", os.getenv("ALERT_WEBHOOK_PORT", "8001"))
+
+
     # Запуск бота
     await application.initialize()
+    await start_webhook(application)
     await application.start()
     await application.updater.start_polling()
     

@@ -564,11 +564,9 @@ class GameService:
             
             # Если все водители найдены, завершаем игру
             if found_drivers >= total_drivers and total_drivers > 0:
-                from src.handlers.callback_handler import check_game_completion_callback
-                return check_game_completion_callback(game_id)
-            
+                return GameService.end_game(game_id)               
             return False
-            
+
         except Exception as e:
             logger.error(f"Ошибка при проверке завершения игры {game_id}: {e}")
             return False

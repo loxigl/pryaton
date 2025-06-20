@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, CallbackQueryHandler
 from loguru import logger
 import re
@@ -70,6 +70,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Обработка callback'ов фотографий
         elif data.startswith("photo_approve_") or data.startswith("photo_reject_"):
             await handle_admin_photo_approval(update, context)
+        
+        # Обработка callback'а завершения игры
+        elif data.startswith("end_game_"):
+            await handle_end_game_callback(update, context)
         
         # Обработка callback'ов настроек игры
         elif data == "game_settings":
@@ -783,8 +787,7 @@ async def check_game_completion_callback(context: ContextTypes.DEFAULT_TYPE, gam
         # Если все водители найдены, завершаем игру
         if drivers_found >= total_drivers and total_drivers > 0:
             logger.info(f"Все водители найдены! Завершаем игру {game_id}")
-            # GameService.end_game сам отправляет уведомления, поэтому вызов notify_game_completion_callback не нужен
-            GameService.end_game(game_id)
+            return GameService.end_game(game_id)
         else:
             logger.info(f"Игра {game_id} продолжается: {drivers_found}/{total_drivers} найдено")
             
@@ -1352,7 +1355,7 @@ async def handle_back_to_admin_callback(update: Update, context: ContextTypes.DE
         await query.edit_message_text("❌ У вас нет прав доступа.")
         return
     
-    from src.keyboards.reply import get_admin_keyboard
+    from src.handlers.admin import get_admin_keyboard
     
     admin_text = (
         f"🔑 <b>Админ-панель</b>\n\n"
@@ -1368,8 +1371,8 @@ async def handle_back_to_admin_callback(update: Update, context: ContextTypes.DE
     )
     
     await query.edit_message_text(
-        admin_text,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
     )
 
 async def handle_edit_profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1673,6 +1676,60 @@ async def handle_select_district_callback(update: Update, context: ContextTypes.
         parse_mode="HTML",
         reply_markup=get_profile_field_confirm_keyboard("district")
     )
+
+async def handle_end_game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик callback'а завершения игры"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    
+    # Проверяем права администратора
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("❌ У вас нет прав доступа.")
+        return
+    
+    # Извлекаем ID игры
+    match = re.match(r"end_game_(\d+)", query.data)
+    if not match:
+        await query.edit_message_text("❌ Неверный формат callback'а.")
+        return
+    
+    game_id = int(match.group(1))
+    
+    try:
+        from src.services.manual_game_control_service import ManualGameControlService
+        
+        result = ManualGameControlService.manual_end_game(game_id, user_id, "Завершено администратором")
+        
+        if result["success"]:
+            await query.edit_message_text(
+                f"✅ <b>Игра завершена!</b>\n\n"
+                f"🏁 Игра #{game_id} успешно завершена.\n"
+                f"⏰ Время завершения: {datetime.fromisoformat(result['ended_at']).strftime('%H:%M:%S')}\n\n"
+                f"Все участники получат уведомление о завершении игры.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ К списку игр", callback_data="back_to_admin_games")
+                ]]),
+                parse_mode="HTML"
+            )
+        else:
+            await query.edit_message_text(
+                f"❌ <b>Ошибка:</b> {result['error']}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data=f"admin_game_{game_id}")
+                ]]),
+                parse_mode="HTML"
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка при завершении игры {game_id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при завершении игры. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data=f"admin_game_{game_id}")
+            ]])
+        )
 
 def get_callback_handler_patterns():
     """Возвращает все паттерны для регистрации обработчиков"""
