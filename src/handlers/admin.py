@@ -12,6 +12,7 @@ import re
 from loguru import logger
 import os
 import pytz
+import asyncio
 
 from src.services.enhanced_scheduler_service import format_msk_time,format_msk_datetime
 from src.services.user_service import UserService
@@ -2929,7 +2930,30 @@ async def set_participant_role_button(update: Update, context: CallbackContext) 
         role_text = "убрана" if new_role is None else new_role.value
         logger.info(f"Админ {user_id} установил роль '{role_text}' участнику {participant_id} в игре {game_id}")
         
-        # Возвращаемся к списку участников
+        # Показываем промежуточное сообщение с подтверждением
+        participant_name = participant.user.name
+        
+        if new_role is None:
+            status_text = f"✅ Роль участника <b>{participant_name}</b> убрана"
+            status_emoji = "❓"
+        elif new_role == GameRole.DRIVER:
+            status_text = f"✅ <b>{participant_name}</b> назначен водителем 🚗"
+            status_emoji = "🚗"
+        else:  # SEEKER
+            status_text = f"✅ <b>{participant_name}</b> назначен искателем 🔍"
+            status_emoji = "🔍"
+        
+        # Показываем уведомление с анимацией
+        await query.edit_message_text(
+            f"{status_text}\n\n"
+            f"⏳ Обновляем список участников...",
+            parse_mode="HTML"
+        )
+        
+        # Небольшая пауза для визуального эффекта
+        await asyncio.sleep(1)
+        
+        # Возвращаемся к обновленному списку участников
         await assign_roles_manual_button(update, context)
         
     except Exception as e:
@@ -3010,6 +3034,19 @@ async def auto_fill_roles_button(update: Update, context: CallbackContext) -> No
         
         logger.info(f"Админ {user_id} автоматически назначил роли {assigned_count} участникам в игре {game_id}")
         
+        # Показываем промежуточное сообщение с результатом автозаполнения
+        await query.edit_message_text(
+            f"⚡ <b>Автозаполнение завершено!</b>\n\n"
+            f"✅ Назначено ролей: <b>{assigned_count}</b>\n"
+            f"🚗 Новых водителей: <b>{drivers_to_assign}</b>\n"
+            f"🔍 Новых искателей: <b>{len(unassigned_participants) - drivers_to_assign}</b>\n\n"
+            f"⏳ Обновляем список участников...",
+            parse_mode="HTML"
+        )
+        
+        # Пауза для визуального эффекта
+        await asyncio.sleep(1.5)
+        
         # Возвращаемся к списку участников
         await assign_roles_manual_button(update, context)
         
@@ -3052,6 +3089,19 @@ async def reset_all_roles_button(update: Update, context: CallbackContext) -> No
         
         db.commit()
         logger.info(f"Админ {user_id} сбросил все роли в игре {game_id}")
+        
+        # Показываем промежуточное сообщение с подтверждением
+        roles_count = len(participants)
+        await query.edit_message_text(
+            f"🔄 <b>Все роли сброшены!</b>\n\n"
+            f"✅ Очищено ролей: <b>{roles_count}</b>\n"
+            f"❓ Все участники теперь без ролей\n\n"
+            f"⏳ Обновляем список участников...",
+            parse_mode="HTML"
+        )
+        
+        # Пауза для визуального эффекта
+        await asyncio.sleep(1)
         
         # Возвращаемся к интерфейсу ручного назначения
         await assign_roles_manual_button(update, context)
