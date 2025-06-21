@@ -260,7 +260,7 @@ def get_manual_control_keyboard(game_id, game_status, participants_info):
     if game_status == GameStatus.UPCOMING.value:
         buttons.append([InlineKeyboardButton(
             text="🎲 Распределить роли",
-            callback_data=f"manual_assign_roles_{game_id}"
+            callback_data=f"choose_role_assignment_type_{game_id}"
         )])
         buttons.append([InlineKeyboardButton(
             text="▶️ Начать фазу пряток",
@@ -433,5 +433,116 @@ def get_district_selection_keyboard():
         buttons.append([InlineKeyboardButton(text=district, callback_data=f"select_district_{district}")])
     
     buttons.append([InlineKeyboardButton(text="◀️ Назад к редактированию", callback_data="edit_profile")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_role_assignment_type_keyboard(game_id):
+    """Клавиатура для выбора типа распределения ролей"""
+    buttons = [
+        [InlineKeyboardButton(
+            text="🎲 Случайное распределение",
+            callback_data=f"assign_roles_random_{game_id}"
+        )],
+        [InlineKeyboardButton(
+            text="✋ Ручное распределение",
+            callback_data=f"assign_roles_manual_{game_id}"
+        )],
+        [InlineKeyboardButton(
+            text="◀️ Назад к управлению",
+            callback_data=f"manual_control_{game_id}"
+        )]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_manual_role_assignment_keyboard(game_id, participants, max_drivers):
+    """Клавиатура для ручного назначения ролей участникам"""
+    buttons = []
+    
+    # Группируем участников по ролям
+    drivers = [p for p in participants if p.get("current_role") == "driver"]
+    seekers = [p for p in participants if p.get("current_role") == "seeker"]
+    unassigned = [p for p in participants if not p.get("current_role")]
+    
+    # Показываем текущих водителей
+    if drivers:
+        buttons.append([InlineKeyboardButton(
+            text=f"🚗 ВОДИТЕЛИ ({len(drivers)}/{max_drivers})",
+            callback_data="info_drivers"
+        )])
+        for driver in drivers:
+            buttons.append([InlineKeyboardButton(
+                text=f"🚗 {driver['user_name']}",
+                callback_data=f"toggle_role_{game_id}_{driver['id']}_seeker"
+            )])
+    
+    # Показываем текущих искателей
+    if seekers:
+        buttons.append([InlineKeyboardButton(
+            text="🔍 ИСКАТЕЛИ",
+            callback_data="info_seekers"
+        )])
+        for seeker in seekers:
+            buttons.append([InlineKeyboardButton(
+                text=f"🔍 {seeker['user_name']}",
+                callback_data=f"toggle_role_{game_id}_{seeker['id']}_driver"
+            )])
+    
+    # Показываем неназначенных участников
+    if unassigned:
+        buttons.append([InlineKeyboardButton(
+            text="❓ НЕ НАЗНАЧЕНЫ",
+            callback_data="info_unassigned"
+        )])
+        for participant in unassigned:
+            # Кнопки для назначения роли
+            row = []
+            if len(drivers) < max_drivers:
+                row.append(InlineKeyboardButton(
+                    text=f"🚗 {participant['user_name']}",
+                    callback_data=f"assign_role_{game_id}_{participant['id']}_driver"
+                ))
+            row.append(InlineKeyboardButton(
+                text=f"🔍 {participant['user_name']}",
+                callback_data=f"assign_role_{game_id}_{participant['id']}_seeker"
+            ))
+            buttons.append(row)
+    
+    # Кнопки управления
+    if len(drivers) > 0 and len(seekers) > 0:
+        buttons.append([InlineKeyboardButton(
+            text="✅ Подтвердить распределение",
+            callback_data=f"confirm_manual_roles_{game_id}"
+        )])
+    
+    buttons.append([InlineKeyboardButton(
+        text="🔄 Сбросить все роли",
+        callback_data=f"reset_all_roles_{game_id}"
+    )])
+    
+    buttons.append([InlineKeyboardButton(
+        text="◀️ Назад к выбору типа",
+        callback_data=f"choose_role_assignment_type_{game_id}"
+    )])
+    
+    return InlineKeyboardMarkup(buttons)
+
+def get_available_users_keyboard(game_id, users):
+    """Клавиатура для выбора пользователей для добавления в игру"""
+    buttons = []
+    
+    for user in users:
+        button_text = f"{user['name']}"
+        if user.get('district'):
+            button_text += f" ({user['district']})"
+        
+        buttons.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"confirm_add_participant_{game_id}_{user['id']}"
+        )])
+    
+    buttons.append([InlineKeyboardButton(
+        text="◀️ Назад к участникам",
+        callback_data=f"manage_participants_{game_id}"
+    )])
+    
     return InlineKeyboardMarkup(buttons)
  

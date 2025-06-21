@@ -568,43 +568,171 @@ class ManualGameControlService:
             db.close()
 
     @staticmethod
-    def get_available_users_for_game(game_id: int) -> Dict[str, Any]:
+    def get_available_users_for_game(game_id: int) -> List[Dict[str, Any]]:
         """Получить список пользователей, доступных для добавления в игру"""
         db_generator = get_db()
         db = next(db_generator)
         
         try:
-            # Получаем игру
+            # Получаем всех пользователей, которые еще не участвуют в игре
+            existing_participants = db.query(GameParticipant.user_id).filter(
+                GameParticipant.game_id == game_id
+            ).subquery()
+            
+            available_users = db.query(User).filter(
+                ~User.id.in_(existing_participants)
+            ).all()
+            
+            result = []
+            for user in available_users:
+                result.append({
+                    "id": user.id,
+                    "name": user.name,
+                    "phone": user.phone,
+                    "district": user.district
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении доступных пользователей: {e}")
+            return []
+        finally:
+            db.close()
+
+    @staticmethod
+    def validate_role_distribution(game_id: int, role_assignments: Dict[int, GameRole]) -> Dict[str, Any]:
+        """Валидация распределения ролей"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        try:
             game = db.query(Game).filter(Game.id == game_id).first()
             if not game:
                 return {"success": False, "error": "Игра не найдена"}
             
-            # Получаем всех пользователей
-            all_users = UserService.get_all_users()
+            # Подсчитываем роли
+            driver_count = sum(1 for role in role_assignments.values() if role == GameRole.DRIVER)
+            seeker_count = sum(1 for role in role_assignments.values() if role == GameRole.SEEKER)
+            total_assigned = len(role_assignments)
+            total_participants = len(game.participants)
             
-            # Получаем ID участников игры
-            participant_user_ids = {p.user_id for p in game.participants}
+            # Проверки
+            if total_assigned != total_participants:
+                return {"success": False, "error": f"Не всем участникам назначены роли: {total_assigned}/{total_participants}"}
             
-            # Фильтруем доступных пользователей
-            available_users = []
-            for user in all_users:
-                if user.id not in participant_user_ids:
-                    available_users.append({
-                        "id": user.id,
-                        "name": user.name,
-                        "phone": user.phone,
-                        "district": user.district
-                    })
+            if driver_count > game.max_drivers:
+                return {"success": False, "error": f"Слишком много водителей: {driver_count}/{game.max_drivers}"}
+            
+            if driver_count == 0:
+                return {"success": False, "error": "Должен быть хотя бы 1 водитель"}
+            
+            if seeker_count == 0:
+                return {"success": False, "error": "Должен быть хотя бы 1 искатель"}
             
             return {
                 "success": True,
-                "users": available_users,
-                "current_participants": len(game.participants),
-                "max_participants": game.max_participants
+                "driver_count": driver_count,
+                "seeker_count": seeker_count,
+                "max_drivers": game.max_drivers
             }
             
         except Exception as e:
-            logger.error(f"Ошибка при получении доступных пользователей: {e}")
+            logger.error(f"Ошибка при валидации ролей: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
+
+    @staticmethod
+    def manual_assign_roles(game_id: int, role_assignments: Dict[int, GameRole], admin_user_id: int) -> Dict[str, Any]:
+        """Ручное распределение ролей"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        try:
+            # Валидируем распределение
+            validation = ManualGameControlService.validate_role_distribution(game_id, role_assignments)
+            if not validation["success"]:
+                return validation
+            
+            game = db.query(Game).filter(Game.id == game_id).first()
+            if not game:
+                return {"success": False, "error": "Игра не найдена"}
+            
+            if game.status not in [GameStatus.RECRUITING, GameStatus.UPCOMING]:
+                return {"success": False, "error": "Нельзя назначать роли после начала игры"}
+            
+            # Назначаем роли
+            assigned_participants = []
+            for participant_id, role in role_assignments.items():
+                participant = db.query(GameParticipant).filter(
+                    GameParticipant.game_id == game_id,
+                    GameParticipant.id == participant_id
+                ).first()
+                
+                if participant:
+                    participant.role = role
+                    assigned_participants.append({
+                        "participant_id": participant_id,
+                        "user_name": participant.user.name,
+                        "role": role.value
+                    })
+            
+            db.commit()
+            
+            logger.info(f"Админ {admin_user_id} вручную назначил роли в игре {game_id}: {validation['driver_count']} водителей, {validation['seeker_count']} искателей")
+            
+            return {
+                "success": True,
+                "message": f"Роли успешно назначены: {validation['driver_count']} водителей, {validation['seeker_count']} искателей",
+                "assigned_participants": assigned_participants,
+                "driver_count": validation["driver_count"],
+                "seeker_count": validation["seeker_count"]
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка при ручном назначении ролей: {e}")
+            db.rollback()
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_manual_role_assignment_info(game_id: int) -> Dict[str, Any]:
+        """Получить информацию для ручного назначения ролей"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        try:
+            game = db.query(Game).filter(Game.id == game_id).first()
+            if not game:
+                return {"success": False, "error": "Игра не найдена"}
+            
+            if game.status not in [GameStatus.RECRUITING, GameStatus.UPCOMING]:
+                return {"success": False, "error": "Нельзя назначать роли после начала игры"}
+            
+            participants = []
+            for participant in game.participants:
+                participants.append({
+                    "id": participant.id,
+                    "user_id": participant.user_id,
+                    "user_name": participant.user.name,
+                    "current_role": participant.role.value if participant.role else None,
+                    "district": participant.user.district
+                })
+            
+            return {
+                "success": True,
+                "game_id": game_id,
+                "participants": participants,
+                "max_drivers": game.max_drivers,
+                "max_participants": game.max_participants,
+                "current_driver_count": sum(1 for p in participants if p["current_role"] == "driver"),
+                "current_seeker_count": sum(1 for p in participants if p["current_role"] == "seeker")
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении информации для назначения ролей: {e}")
             return {"success": False, "error": str(e)}
         finally:
             db.close() 

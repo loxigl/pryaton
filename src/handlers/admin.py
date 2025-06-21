@@ -17,7 +17,8 @@ from src.services.enhanced_scheduler_service import format_msk_time,format_msk_d
 from src.services.user_service import UserService
 from src.services.game_service import GameService
 from src.services.settings_service import SettingsService
-from src.models.game import GameStatus, GameRole
+from src.models.game import GameStatus, GameRole, GameParticipant
+from src.models.base import get_db
 from src.keyboards.inline import get_admin_game_keyboard
 from src.keyboards.reply import get_district_keyboard, get_contextual_main_keyboard
 
@@ -33,7 +34,8 @@ from src.keyboards.inline import (
     get_time_settings_keyboard,
     get_manual_control_keyboard,
     get_participants_management_keyboard,
-    get_participant_actions_keyboard
+    get_participant_actions_keyboard,
+    get_role_assignment_type_keyboard
 )
 
 # Состояния для создания игры
@@ -2655,21 +2657,12 @@ async def add_participant_button(update: Update, context: CallbackContext) -> No
     game_id = int(match.group(1))
     
     # Получаем список доступных пользователей
-    result = ManualGameControlService.get_available_users_for_game(game_id)
-    
-    if not result["success"]:
-        await query.edit_message_text(f"❌ {result['error']}")
-        return
-    
-    available_users = result["users"]
-    current_participants = result["current_participants"]
-    max_participants = result["max_participants"]
+    available_users = ManualGameControlService.get_available_users_for_game(game_id)
     
     if not available_users:
         await query.edit_message_text(
-            f"👥 <b>Добавление участника в игру #{game_id}</b>\n\n"
-            f"❌ Нет доступных пользователей для добавления.\n"
-            f"Участники: {current_participants}/{max_participants}",
+            f"❌ <b>Нет доступных пользователей для добавления</b>\n\n"
+            f"Все зарегистрированные пользователи уже участвуют в игре.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("◀️ Назад к участникам", callback_data=f"manage_participants_{game_id}")
             ]]),
@@ -2677,36 +2670,15 @@ async def add_participant_button(update: Update, context: CallbackContext) -> No
         )
         return
     
-    # Создаем клавиатуру с пользователями
-    buttons = []
-    for user in available_users[:20]:  # Ограничиваем до 20 пользователей
-        button_text = f"👤 {user['name']}"
-        if user['district']:
-            button_text += f" ({user['district']})"
-        
-        buttons.append([InlineKeyboardButton(
-            text=button_text,
-            callback_data=f"confirm_add_participant_{game_id}_{user['id']}"
-        )])
-    
-    buttons.append([InlineKeyboardButton(
-        text="◀️ Назад к участникам",
-        callback_data=f"manage_participants_{game_id}"
-    )])
-    
-    text = (
-        f"👥 <b>Добавление участника в игру #{game_id}</b>\n\n"
-        f"Участники: {current_participants}/{max_participants}\n"
-        f"Доступно пользователей: {len(available_users)}\n\n"
-        f"Выберите пользователя для добавления:"
-    )
-    
-    if len(available_users) > 20:
-        text += f"\n\n<i>Показаны первые 20 пользователей</i>"
+    # Создаем клавиатуру с доступными пользователями
+    from src.keyboards.inline import get_available_users_keyboard
+    keyboard = get_available_users_keyboard(game_id, available_users)
     
     await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(buttons),
+        f"➕ <b>Добавление участника в игру #{game_id}</b>\n\n"
+        f"Доступно пользователей: {len(available_users)}\n\n"
+        f"Выберите пользователя для добавления:",
+        reply_markup=keyboard,
         parse_mode="HTML"
     )
 
@@ -2786,6 +2758,276 @@ async def remove_participant_button(update: Update, context: CallbackContext) ->
             parse_mode="HTML"
         )
 
+async def choose_role_assignment_type_button(update: Update, context: CallbackContext) -> None:
+    """Выбор типа распределения ролей (случайное или ручное)"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"choose_role_assignment_type_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Получаем информацию об игре
+    game = GameService.get_game_by_id(game_id)
+    if not game:
+        await query.edit_message_text("❌ Игра не найдена")
+        return
+    
+    participants_count = len(game.participants)
+    
+    # Создаем клавиатуру выбора типа
+    from src.keyboards.inline import get_role_assignment_type_keyboard
+    keyboard = get_role_assignment_type_keyboard(game_id)
+    
+    await query.edit_message_text(
+        f"🎲 <b>Распределение ролей для игры #{game_id}</b>\n\n"
+        f"👥 <b>Участников:</b> {participants_count}\n"
+        f"🚗 <b>Максимум водителей:</b> {game.max_drivers}\n\n"
+        f"Выберите способ распределения ролей:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+async def assign_roles_random_button(update: Update, context: CallbackContext) -> None:
+    """Случайное распределение ролей"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"assign_roles_random_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Выполняем случайное распределение ролей
+    roles = GameService.assign_roles(game_id)
+    
+    if not roles:
+        await query.edit_message_text(
+            "❌ Не удалось распределить роли. Возможно, в игре недостаточно участников.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к выбору типа", callback_data=f"choose_role_assignment_type_{game_id}")
+            ]])
+        )
+        return
+    
+    # Формируем сообщение с результатом
+    game = GameService.get_game_by_id(game_id)
+    roles_info = "\n".join([
+        f"- {p.user.name}: {'🚗 Водитель' if p.role == GameRole.DRIVER else '🔍 Искатель'}" 
+        for p in game.participants if p.role
+    ])
+    
+    await query.edit_message_text(
+        f"✅ <b>Роли распределены случайно!</b>\n\n"
+        f"<b>Результат:</b>\n{roles_info}",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+        ]]),
+        parse_mode="HTML"
+    )
+
+async def assign_roles_manual_button(update: Update, context: CallbackContext) -> None:
+    """Начало ручного распределения ролей"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"assign_roles_manual_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Получаем информацию для ручного назначения ролей
+    info = ManualGameControlService.get_manual_role_assignment_info(game_id)
+    
+    if not info["success"]:
+        await query.edit_message_text(f"❌ {info['error']}")
+        return
+    
+    participants = info["participants"]
+    max_drivers = info["max_drivers"]
+    
+    # Создаем клавиатуру для ручного назначения
+    from src.keyboards.inline import get_manual_role_assignment_keyboard
+    keyboard = get_manual_role_assignment_keyboard(game_id, participants, max_drivers)
+    
+    current_drivers = info["current_driver_count"]
+    current_seekers = info["current_seeker_count"]
+    
+    await query.edit_message_text(
+        f"✋ <b>Ручное распределение ролей</b>\n\n"
+        f"🎮 <b>Игра #{game_id}</b>\n"
+        f"👥 <b>Участников:</b> {len(participants)}\n"
+        f"🚗 <b>Водители:</b> {current_drivers}/{max_drivers}\n"
+        f"🔍 <b>Искатели:</b> {current_seekers}\n\n"
+        f"Нажмите на участника, чтобы назначить/изменить роль:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+async def assign_role_button(update: Update, context: CallbackContext) -> None:
+    """Назначение роли участнику"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"assign_role_(\d+)_(\d+)_(driver|seeker)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    role_str = match.group(3)
+    
+    # Назначаем роль через существующую функцию
+    from src.models.game import GameRole
+    new_role = GameRole.DRIVER if role_str == "driver" else GameRole.SEEKER
+    
+    result = ManualGameControlService.reassign_participant_role(game_id, participant_id, new_role, user_id)
+    
+    # Возвращаемся к интерфейсу ручного назначения
+    await assign_roles_manual_button(update, context)
+
+async def toggle_role_button(update: Update, context: CallbackContext) -> None:
+    """Переключение роли участника"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"toggle_role_(\d+)_(\d+)_(driver|seeker)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    new_role_str = match.group(3)
+    
+    # Переключаем роль
+    from src.models.game import GameRole
+    new_role = GameRole.DRIVER if new_role_str == "driver" else GameRole.SEEKER
+    
+    result = ManualGameControlService.reassign_participant_role(game_id, participant_id, new_role, user_id)
+    
+    # Возвращаемся к интерфейсу ручного назначения
+    await assign_roles_manual_button(update, context)
+
+async def reset_all_roles_button(update: Update, context: CallbackContext) -> None:
+    """Сброс всех ролей участников"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"reset_all_roles_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Сбрасываем все роли
+    db_generator = get_db()
+    db = next(db_generator)
+    
+    try:
+        participants = db.query(GameParticipant).filter(GameParticipant.game_id == game_id).all()
+        for participant in participants:
+            participant.role = None
+        
+        db.commit()
+        logger.info(f"Админ {user_id} сбросил все роли в игре {game_id}")
+        
+        # Возвращаемся к интерфейсу ручного назначения
+        await assign_roles_manual_button(update, context)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при сбросе ролей: {e}")
+        db.rollback()
+        await query.edit_message_text(
+            f"❌ Ошибка при сбросе ролей: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data=f"assign_roles_manual_{game_id}")
+            ]])
+        )
+    finally:
+        db.close()
+
+async def confirm_manual_roles_button(update: Update, context: CallbackContext) -> None:
+    """Подтверждение ручного распределения ролей"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"confirm_manual_roles_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Получаем текущую информацию о ролях
+    info = ManualGameControlService.get_manual_role_assignment_info(game_id)
+    
+    if not info["success"]:
+        await query.edit_message_text(f"❌ {info['error']}")
+        return
+    
+    # Формируем сообщение с результатом
+    participants = info["participants"]
+    drivers = [p for p in participants if p.get("current_role") == "driver"]
+    seekers = [p for p in participants if p.get("current_role") == "seeker"]
+    
+    roles_info = ""
+    if drivers:
+        roles_info += "🚗 <b>Водители:</b>\n"
+        for driver in drivers:
+            roles_info += f"  - {driver['user_name']}\n"
+    
+    if seekers:
+        roles_info += "\n🔍 <b>Искатели:</b>\n"
+        for seeker in seekers:
+            roles_info += f"  - {seeker['user_name']}\n"
+    
+    await query.edit_message_text(
+        f"✅ <b>Роли успешно назначены вручную!</b>\n\n"
+        f"{roles_info}",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
+        ]]),
+        parse_mode="HTML"
+    )
+
 # =============================================================================
 # КОНЕЦ НОВЫХ ОБРАБОТЧИКОВ
 # =============================================================================
@@ -2831,6 +3073,13 @@ admin_handlers = [
     CallbackQueryHandler(add_participant_button, pattern=r"add_participant_\d+"),
     CallbackQueryHandler(confirm_add_participant_button, pattern=r"confirm_add_participant_\d+_\d+"),
     CallbackQueryHandler(remove_participant_button, pattern=r"remove_participant_\d+_\d+"),
+    CallbackQueryHandler(choose_role_assignment_type_button, pattern=r"choose_role_assignment_type_\d+"),
+    CallbackQueryHandler(assign_roles_random_button, pattern=r"assign_roles_random_\d+"),
+    CallbackQueryHandler(assign_roles_manual_button, pattern=r"assign_roles_manual_\d+"),
+    CallbackQueryHandler(assign_role_button, pattern=r"assign_role_\d+_\d+_(driver|seeker)"),
+    CallbackQueryHandler(toggle_role_button, pattern=r"toggle_role_\d+_\d+_(driver|seeker)"),
+    CallbackQueryHandler(reset_all_roles_button, pattern=r"reset_all_roles_\d+"),
+    CallbackQueryHandler(confirm_manual_roles_button, pattern=r"confirm_manual_roles_\d+"),
     
     # Обработчик текстовых сообщений из админ-меню (обновлен для поддержки настроек игры)
     MessageHandler(
