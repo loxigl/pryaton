@@ -458,8 +458,13 @@ async def show_game_info(update: Update, context: CallbackContext, game, is_part
             parse_mode="HTML"
         )
         logger.info(f"Показана информация об игре {game.id}")
-    except Exception as e:
-        logger.error(f"Ошибка при показе информации об игре: {e}")
+    except BadRequest as err:
+        # Telegram always raises this if nothing changed;
+        # ignore it and move on
+        if "Message is not modified" in err.message:
+            return
+        # any other BadRequest should bubble up
+        raise
 
 # Функция для получения текстового представления статуса
 def get_status_text(status: GameStatus) -> str:

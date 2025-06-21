@@ -2429,6 +2429,363 @@ async def manage_participants_button(update: Update, context: CallbackContext) -
         parse_mode="HTML"
     )
 
+async def manage_individual_participant_button(update: Update, context: CallbackContext) -> None:
+    """Управление конкретным участником игры"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"manage_participant_(\d+)_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    
+    # Получаем информацию об участнике
+    control_info = ManualGameControlService.get_game_control_info(game_id)
+    
+    if not control_info["success"]:
+        await query.edit_message_text(f"❌ {control_info['error']}")
+        return
+    
+    # Ищем конкретного участника
+    participant_info = None
+    for participant in control_info["participants"]:
+        if participant["id"] == participant_id:
+            participant_info = participant
+            break
+    
+    if not participant_info:
+        await query.edit_message_text("❌ Участник не найден")
+        return
+    
+    # Создаем клавиатуру с действиями для участника
+    from src.keyboards.inline import get_participant_actions_keyboard
+    keyboard = get_participant_actions_keyboard(game_id, participant_id, participant_info)
+    
+    role_emoji = "🚗" if participant_info.get("role") == "driver" else "🔍"
+    status_emoji = "✅" if participant_info.get("is_found") else "⏳"
+    
+    participant_text = (
+        f"👤 <b>Управление участником</b>\n\n"
+        f"🎮 <b>Игра #{game_id}</b>\n"
+        f"👤 <b>Участник:</b> {participant_info['user_name']}\n"
+        f"🎭 <b>Роль:</b> {role_emoji} {participant_info.get('role', 'Не назначена')}\n"
+        f"📊 <b>Статус:</b> {status_emoji} {'Найден' if participant_info.get('is_found') else 'В игре'}\n\n"
+        f"Выберите действие:"
+    )
+    
+    await query.edit_message_text(
+        participant_text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+async def change_participant_role_button(update: Update, context: CallbackContext) -> None:
+    """Изменение роли участника"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"change_role_(\d+)_(\d+)_(driver|seeker)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    new_role_str = match.group(3)
+    
+    from src.models.game import GameRole
+    new_role = GameRole.DRIVER if new_role_str == "driver" else GameRole.SEEKER
+    
+    result = ManualGameControlService.reassign_participant_role(game_id, participant_id, new_role, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}"),
+                InlineKeyboardButton("◀️ К участникам", callback_data=f"manage_participants_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def mark_participant_found_button(update: Update, context: CallbackContext) -> None:
+    """Отметка участника как найденного"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"mark_found_(\d+)_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    
+    result = ManualGameControlService.manual_mark_participant_found(game_id, participant_id, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}"),
+                InlineKeyboardButton("◀️ К участникам", callback_data=f"manage_participants_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def mark_participant_eliminated_button(update: Update, context: CallbackContext) -> None:
+    """Отметка участника как выбывшего"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"mark_eliminated_(\d+)_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    
+    result = ManualGameControlService.manual_mark_participant_eliminated(game_id, participant_id, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}"),
+                InlineKeyboardButton("◀️ К участникам", callback_data=f"manage_participants_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def unmark_participant_found_button(update: Update, context: CallbackContext) -> None:
+    """Отмена отметки участника как найденного"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"unmark_found_(\d+)_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    
+    result = ManualGameControlService.manual_unmark_participant_found(game_id, participant_id, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}"),
+                InlineKeyboardButton("◀️ К участникам", callback_data=f"manage_participants_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def add_participant_button(update: Update, context: CallbackContext) -> None:
+    """Показать список доступных пользователей для добавления"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"add_participant_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    
+    # Получаем список доступных пользователей
+    result = ManualGameControlService.get_available_users_for_game(game_id)
+    
+    if not result["success"]:
+        await query.edit_message_text(f"❌ {result['error']}")
+        return
+    
+    available_users = result["users"]
+    current_participants = result["current_participants"]
+    max_participants = result["max_participants"]
+    
+    if not available_users:
+        await query.edit_message_text(
+            f"👥 <b>Добавление участника в игру #{game_id}</b>\n\n"
+            f"❌ Нет доступных пользователей для добавления.\n"
+            f"Участники: {current_participants}/{max_participants}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участникам", callback_data=f"manage_participants_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+        return
+    
+    # Создаем клавиатуру с пользователями
+    buttons = []
+    for user in available_users[:20]:  # Ограничиваем до 20 пользователей
+        button_text = f"👤 {user['name']}"
+        if user['district']:
+            button_text += f" ({user['district']})"
+        
+        buttons.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"confirm_add_participant_{game_id}_{user['id']}"
+        )])
+    
+    buttons.append([InlineKeyboardButton(
+        text="◀️ Назад к участникам",
+        callback_data=f"manage_participants_{game_id}"
+    )])
+    
+    text = (
+        f"👥 <b>Добавление участника в игру #{game_id}</b>\n\n"
+        f"Участники: {current_participants}/{max_participants}\n"
+        f"Доступно пользователей: {len(available_users)}\n\n"
+        f"Выберите пользователя для добавления:"
+    )
+    
+    if len(available_users) > 20:
+        text += f"\n\n<i>Показаны первые 20 пользователей</i>"
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="HTML"
+    )
+
+async def confirm_add_participant_button(update: Update, context: CallbackContext) -> None:
+    """Подтверждение добавления участника"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"confirm_add_participant_(\d+)_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    target_user_id = int(match.group(2))
+    
+    # Добавляем участника
+    result = ManualGameControlService.add_participant_to_game(game_id, target_user_id, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👥 К списку участников", callback_data=f"manage_participants_{game_id}")],
+                [InlineKeyboardButton("🎮 К управлению игрой", callback_data=f"manual_control_{game_id}")]
+            ]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к добавлению", callback_data=f"add_participant_{game_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
+async def remove_participant_button(update: Update, context: CallbackContext) -> None:
+    """Удаление участника из игры"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not UserService.is_admin(user_id):
+        await query.edit_message_text("У вас нет прав доступа.")
+        return
+    
+    match = re.match(r"remove_participant_(\d+)_(\d+)", query.data)
+    if not match:
+        return
+    
+    game_id = int(match.group(1))
+    participant_id = int(match.group(2))
+    
+    # Удаляем участника
+    result = ManualGameControlService.remove_participant_from_game(game_id, participant_id, user_id)
+    
+    if result["success"]:
+        await query.edit_message_text(
+            f"✅ <b>{result['message']}</b>",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👥 К списку участников", callback_data=f"manage_participants_{game_id}")],
+                [InlineKeyboardButton("🎮 К управлению игрой", callback_data=f"manual_control_{game_id}")]
+            ]),
+            parse_mode="HTML"
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ <b>Ошибка:</b> {result['error']}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад к участнику", callback_data=f"manage_participant_{game_id}_{participant_id}")
+            ]]),
+            parse_mode="HTML"
+        )
+
 # =============================================================================
 # КОНЕЦ НОВЫХ ОБРАБОТЧИКОВ
 # =============================================================================
@@ -2466,6 +2823,14 @@ admin_handlers = [
     CallbackQueryHandler(manual_start_searching_button, pattern=r"manual_start_searching_\d+"),
     CallbackQueryHandler(manual_end_game_button, pattern=r"manual_end_game_\d+"),
     CallbackQueryHandler(manage_participants_button, pattern=r"manage_participants_\d+"),
+    CallbackQueryHandler(manage_individual_participant_button, pattern=r"manage_participant_\d+_\d+"),
+    CallbackQueryHandler(change_participant_role_button, pattern=r"change_role_\d+_\d+_(driver|seeker)"),
+    CallbackQueryHandler(mark_participant_found_button, pattern=r"mark_found_\d+_\d+"),
+    CallbackQueryHandler(mark_participant_eliminated_button, pattern=r"mark_eliminated_\d+_\d+"),
+    CallbackQueryHandler(unmark_participant_found_button, pattern=r"unmark_found_\d+_\d+"),
+    CallbackQueryHandler(add_participant_button, pattern=r"add_participant_\d+"),
+    CallbackQueryHandler(confirm_add_participant_button, pattern=r"confirm_add_participant_\d+_\d+"),
+    CallbackQueryHandler(remove_participant_button, pattern=r"remove_participant_\d+_\d+"),
     
     # Обработчик текстовых сообщений из админ-меню (обновлен для поддержки настроек игры)
     MessageHandler(

@@ -8,6 +8,7 @@ from src.models.game import Game, GameParticipant, GameStatus, GameRole
 from src.models.user import User
 from src.services.game_settings_service import GameSettingsService
 from src.services.game_service import GameService
+from src.services.user_service import UserService
 
 class ManualGameControlService:
     """Сервис для ручного управления игрой администратором"""
@@ -210,6 +211,44 @@ class ManualGameControlService:
             db.close()
     
     @staticmethod
+    def manual_unmark_participant_found(game_id: int, participant_id: int, admin_user_id: int) -> Dict[str, Any]:
+        """Ручная отмена отметки участника как найденного"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        try:
+            participant = db.query(GameParticipant).filter(
+                GameParticipant.game_id == game_id,
+                GameParticipant.id == participant_id
+            ).first()
+            
+            if not participant:
+                return {"success": False, "error": "Участник не найден"}
+            
+            if not participant.is_found:
+                return {"success": False, "error": "Участник не отмечен как найденный"}
+            
+            # Убираем отметку найденного
+            participant.is_found = False
+            participant.found_at = None
+            
+            db.commit()
+            
+            logger.info(f"Админ {admin_user_id} отменил отметку найденного для участника {participant_id} в игре {game_id}")
+            
+            return {
+                "success": True,
+                "message": f"Отметка найденного для участника {participant.user.name} отменена"
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка при отмене отметки найденного: {e}")
+            db.rollback()
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
+    
+    @staticmethod
     def get_game_control_info(game_id: int) -> Dict[str, Any]:
         """Получить информацию о игре для ручного управления"""
         db_generator = get_db()
@@ -324,6 +363,145 @@ class ManualGameControlService:
         except Exception as e:
             logger.error(f"Ошибка при переназначении роли: {e}")
             db.rollback()
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
+
+    @staticmethod
+    def add_participant_to_game(game_id: int, user_id: int, admin_user_id: int) -> Dict[str, Any]:
+        """Добавление участника в игру"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        try:
+            # Проверяем существование игры
+            game = db.query(Game).filter(Game.id == game_id).first()
+            if not game:
+                return {"success": False, "error": "Игра не найдена"}
+            
+            # Проверяем, что игра не завершена
+            if game.status in [GameStatus.COMPLETED, GameStatus.CANCELED]:
+                return {"success": False, "error": "Нельзя добавлять участников в завершенную игру"}
+            
+            # Проверяем, что пользователь существует
+            user, _ = UserService.get_user_by_id(user_id)
+            if not user:
+                return {"success": False, "error": "Пользователь не найден"}
+            
+            # Проверяем, что пользователь еще не участвует
+            existing_participant = db.query(GameParticipant).filter(
+                GameParticipant.game_id == game_id,
+                GameParticipant.user_id == user_id
+            ).first()
+            
+            if existing_participant:
+                return {"success": False, "error": f"Пользователь {user.name} уже участвует в игре"}
+            
+            # Проверяем лимит участников
+            current_participants = len(game.participants)
+            if current_participants >= game.max_participants:
+                return {"success": False, "error": f"Достигнут лимит участников ({game.max_participants})"}
+            
+            # Добавляем участника
+            participant = GameService.join_game(game_id, user_id)
+            if not participant:
+                return {"success": False, "error": "Не удалось добавить участника"}
+            
+            logger.info(f"Админ {admin_user_id} добавил участника {user_id} ({user.name}) в игру {game_id}")
+            
+            return {
+                "success": True,
+                "message": f"Участник {user.name} добавлен в игру",
+                "participant_id": participant.id,
+                "participant_name": user.name
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка при добавлении участника: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
+
+    @staticmethod
+    def remove_participant_from_game(game_id: int, participant_id: int, admin_user_id: int) -> Dict[str, Any]:
+        """Удаление участника из игры"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        try:
+            # Находим участника
+            participant = db.query(GameParticipant).filter(
+                GameParticipant.game_id == game_id,
+                GameParticipant.id == participant_id
+            ).first()
+            
+            if not participant:
+                return {"success": False, "error": "Участник не найден"}
+            
+            # Проверяем статус игры
+            game = participant.game
+            if game.status in [GameStatus.COMPLETED, GameStatus.CANCELED]:
+                return {"success": False, "error": "Нельзя удалять участников из завершенной игры"}
+            
+            # Сохраняем имя для сообщения
+            participant_name = participant.user.name
+            
+            # Удаляем участника
+            db.delete(participant)
+            db.commit()
+            
+            logger.info(f"Админ {admin_user_id} удалил участника {participant_id} ({participant_name}) из игры {game_id}")
+            
+            return {
+                "success": True,
+                "message": f"Участник {participant_name} удален из игры"
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка при удалении участника: {e}")
+            db.rollback()
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_available_users_for_game(game_id: int) -> Dict[str, Any]:
+        """Получить список пользователей, доступных для добавления в игру"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        try:
+            # Получаем игру
+            game = db.query(Game).filter(Game.id == game_id).first()
+            if not game:
+                return {"success": False, "error": "Игра не найдена"}
+            
+            # Получаем всех пользователей
+            all_users = UserService.get_all_users()
+            
+            # Получаем ID участников игры
+            participant_user_ids = {p.user_id for p in game.participants}
+            
+            # Фильтруем доступных пользователей
+            available_users = []
+            for user in all_users:
+                if user.id not in participant_user_ids:
+                    available_users.append({
+                        "id": user.id,
+                        "name": user.name,
+                        "phone": user.phone,
+                        "district": user.district
+                    })
+            
+            return {
+                "success": True,
+                "users": available_users,
+                "current_participants": len(game.participants),
+                "max_participants": game.max_participants
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении доступных пользователей: {e}")
             return {"success": False, "error": str(e)}
         finally:
             db.close() 

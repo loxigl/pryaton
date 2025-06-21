@@ -1,9 +1,11 @@
+
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from loguru import logger
 from datetime import datetime
 import os
 
+from src.handlers.scheduler_admin import format_msk_datetime
 from src.services.user_service import UserService
 from src.services.game_service import GameService
 from src.services.location_service import LocationService
@@ -234,7 +236,7 @@ async def notify_admins_about_location(context: ContextTypes.DEFAULT_TYPE, user,
             f"👤 <b>От:</b> {user.name}\n"
             f"🎮 <b>Игра:</b> {game.district}\n"
             f"🎭 <b>Роль:</b> {role_text}\n"
-            f"📅 <b>Время:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"📅 <b>Время:</b> {format_msk_datetime(datetime.now())}\n\n"
             f"🌐 <b>Координаты:</b> {latitude:.6f}, {longitude:.6f}\n"
         )
         

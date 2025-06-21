@@ -317,6 +317,12 @@ def get_participants_management_keyboard(game_id, participants):
             callback_data=f"manage_participant_{game_id}_{participant['id']}"
         )])
     
+    # Добавляем кнопку для добавления нового участника
+    buttons.append([InlineKeyboardButton(
+        text="➕ Добавить участника",
+        callback_data=f"add_participant_{game_id}"
+    )])
+    
     buttons.append([InlineKeyboardButton(
         text="◀️ Назад к управлению",
         callback_data=f"manual_control_{game_id}"
@@ -354,6 +360,12 @@ def get_participant_actions_keyboard(game_id, participant_id, participant_info):
             text="🔄 Отменить нахождение",
             callback_data=f"unmark_found_{game_id}_{participant_id}"
         )])
+    
+    # Кнопка удаления участника
+    buttons.append([InlineKeyboardButton(
+        text="🗑 Удалить участника",
+        callback_data=f"remove_participant_{game_id}_{participant_id}"
+    )])
     
     buttons.append([InlineKeyboardButton(
         text="◀️ Назад к участникам",

@@ -34,6 +34,7 @@ def format_msk_datetime(dt: datetime) -> str:
     msk_time = dt.astimezone(DEFAULT_TIMEZONE)
     return msk_time.strftime('%d.%m.%Y в %H:%M')
 
+
 class EnhancedSchedulerService:
     """Улучшенный сервис планировщика с персистентными событиями"""
     
@@ -43,6 +44,7 @@ class EnhancedSchedulerService:
         self.application = application
         self.bot = application.bot
         self.format_msk_time=format_msk_time
+        self.format_msk_datetime=format_msk_datetime
         # Настройки из переменных окружения
         self.hiding_time = int(os.getenv("HIDING_TIME", 30))  # минуты
         self.reminder_times = [int(x) for x in os.getenv("REMINDER_BEFORE_GAME", "60,24,5").split(",")]  # минуты

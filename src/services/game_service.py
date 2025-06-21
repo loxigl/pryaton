@@ -474,6 +474,7 @@ class GameService:
         
         # Обновление статуса игры
         game.status = GameStatus.CANCELED
+        game.ended_at = datetime.now()
         db.commit()
         
         # Отменяем все запланированные задачи для игры и отправляем уведомления
