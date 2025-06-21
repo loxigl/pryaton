@@ -439,32 +439,33 @@ class ManualGameControlService:
             if not participant:
                 return {"success": False, "error": "Не удалось добавить участника"}
             
-            # КРИТИЧЕСКИ ВАЖНО: Назначаем роль новому участнику
-            # Если игра еще не началась, назначаем роль автоматически
-            if game.status in [GameStatus.RECRUITING, GameStatus.UPCOMING]:
+            # ПРИМЕЧАНИЕ: Роли НЕ назначаются сразу при добавлении участника
+            # Они будут назначены автоматически при запуске игры через GameService.assign_roles()
+            # Это позволяет администратору контролировать состав участников перед назначением ролей
+            
+            # ИСКЛЮЧЕНИЕ: Если в игре уже есть участники с назначенными ролями,
+            # назначаем роль новому участнику, чтобы не сломать возможность запуска игры
+            participants_with_roles = db.query(GameParticipant).filter(
+                GameParticipant.game_id == game_id,
+                GameParticipant.role.isnot(None)
+            ).count()
+            
+            if participants_with_roles > 0:
+                # Роли уже распределены, назначаем роль новому участнику
                 try:
-                    # Считаем текущее распределение ролей
                     current_drivers = sum(1 for p in game.participants if p.role == GameRole.DRIVER)
-                    current_seekers = sum(1 for p in game.participants if p.role == GameRole.SEEKER)
                     
-                    # Назначаем роль в зависимости от потребностей
                     if current_drivers < game.max_drivers:
-                        # Нужны водители
                         participant.role = GameRole.DRIVER
-                        logger.info(f"Новому участнику {user_id} назначена роль DRIVER")
+                        logger.info(f"Новому участнику {user_id} назначена роль DRIVER (роли уже распределены)")
                     else:
-                        # Назначаем искателя
                         participant.role = GameRole.SEEKER
-                        logger.info(f"Новому участнику {user_id} назначена роль SEEKER")
+                        logger.info(f"Новому участнику {user_id} назначена роль SEEKER (роли уже распределены)")
                     
                     db.commit()
                     
                 except Exception as role_error:
                     logger.warning(f"Ошибка при назначении роли новому участнику: {role_error}")
-                    # Роль назначится позже при ручном назначении ролей
-            else:
-                # Если игра уже началась, требуется ручное назначение роли
-                logger.warning(f"Участник {user_id} добавлен в активную игру {game_id} без роли - требуется ручное назначение")
             
             logger.info(f"Админ {admin_user_id} добавил участника {user_id} ({user.name}) в игру {game_id}")
             
