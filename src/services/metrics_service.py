@@ -56,8 +56,8 @@ class MetricsService:
 
     def update_games_metrics(self) -> None:
         """Update gauges for games"""
-        stats: Dict[str, Dict[str, int]] = MonitoringService.get_active_games_stats()
-        for status, count in stats.get("games_by_status", {}).items():
+        stats: Dict[str, Dict[str, int]] = MonitoringService.get_games_by_status()
+        for status, count in stats.items():
             self.games_by_status.labels(status=status).set(count)
 
     def update_scheduler_jobs(self, count: int) -> None:

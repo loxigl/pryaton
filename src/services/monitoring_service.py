@@ -61,6 +61,26 @@ class MonitoringService:
         except Exception as e:
             logger.error(f"Ошибка получения статистики активных игр: {e}")
             return {}
+        
+    @staticmethod
+    def get_games_by_status() -> Dict[str, Any]:
+        """Получение статистики по играм по статусам"""
+        try:
+            db_generator = get_db()
+            db = next(db_generator)
+            
+            games_by_status = {}
+            for status in GameStatus:
+                count = db.query(Game).filter(Game.status == status).count()
+                games_by_status[status.value] = count
+            
+            return games_by_status
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики по играм по статусам: {e}")
+            return {}
+
+            
+            
     
     @staticmethod
     def get_game_detailed_info(game_id: int) -> Optional[Dict[str, Any]]:
