@@ -2954,7 +2954,7 @@ async def set_participant_role_button(update: Update, context: CallbackContext) 
         await asyncio.sleep(1)
         
         # Возвращаемся к обновленному списку участников
-        await assign_roles_manual_button(update, context)
+        await _show_manual_role_assignment_interface(update, context, game_id)
         
     except Exception as e:
         logger.error(f"Ошибка при установке роли: {e}")
@@ -3048,7 +3048,7 @@ async def auto_fill_roles_button(update: Update, context: CallbackContext) -> No
         await asyncio.sleep(1.5)
         
         # Возвращаемся к списку участников
-        await assign_roles_manual_button(update, context)
+        await _show_manual_role_assignment_interface(update, context, game_id)
         
     except Exception as e:
         logger.error(f"Ошибка при автозаполнении ролей: {e}")
@@ -3104,7 +3104,7 @@ async def reset_all_roles_button(update: Update, context: CallbackContext) -> No
         await asyncio.sleep(1)
         
         # Возвращаемся к интерфейсу ручного назначения
-        await assign_roles_manual_button(update, context)
+        await _show_manual_role_assignment_interface(update, context, game_id)
         
     except Exception as e:
         logger.error(f"Ошибка при сбросе ролей: {e}")
@@ -3164,6 +3164,53 @@ async def confirm_manual_roles_button(update: Update, context: CallbackContext) 
             InlineKeyboardButton("◀️ Назад к управлению", callback_data=f"manual_control_{game_id}")
         ]]),
         parse_mode="HTML"
+    )
+
+async def _show_manual_role_assignment_interface(update: Update, context: CallbackContext, game_id: int) -> None:
+    """Helper функция для отображения интерфейса ручного назначения ролей по game_id"""
+    query = update.callback_query
+    
+    try:
+        # Получаем информацию для ручного назначения ролей
+        info = ManualGameControlService.get_manual_role_assignment_info(game_id)
+        
+        if not info["success"]:
+            await query.edit_message_text(f"❌ {info['error']}")
+            return
+        
+        participants = info["participants"]
+        max_drivers = info["max_drivers"]
+        
+        # Формируем заголовок с информацией
+        drivers_count = sum(1 for p in participants if p.get("current_role") == "driver")
+        seekers_count = sum(1 for p in participants if p.get("current_role") == "seeker")
+        unassigned_count = sum(1 for p in participants if not p.get("current_role"))
+        
+        header_text = (
+            f"✋ <b>Ручное распределение ролей</b>\n\n"
+            f"👥 <b>Участников:</b> {len(participants)}\n"
+            f"🚗 <b>Водители:</b> {drivers_count}/{max_drivers}\n"
+            f"🔍 <b>Искатели:</b> {seekers_count}\n"
+            f"❓ <b>Без ролей:</b> {unassigned_count}\n\n"
+            f"Нажмите на участника, чтобы назначить ему роль:"
+        )
+        
+        from src.keyboards.inline import get_manual_role_assignment_keyboard
+        keyboard = get_manual_role_assignment_keyboard(game_id, participants, max_drivers)
+        
+        await query.edit_message_text(
+            header_text,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в _show_manual_role_assignment_interface для игры {game_id}: {e}")
+        await query.edit_message_text(
+            f"❌ Ошибка при обновлении интерфейса: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data=f"manual_control_{game_id}")
+            ]])
     )
 
 # =============================================================================
