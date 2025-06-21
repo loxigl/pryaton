@@ -52,7 +52,7 @@ def get_admin_game_keyboard(game):
     
     # Добавляем кнопки в зависимости от статуса игры
     if game.status == GameStatus.RECRUITING or game.status == GameStatus.UPCOMING:
-        buttons.append([InlineKeyboardButton(text="🎲 Распределить роли", callback_data=f"assign_roles_{game.id}")])
+        buttons.append([InlineKeyboardButton(text="🎲 Распределить роли", callback_data=f"choose_role_assignment_type_{game.id}")])
         # Добавляем кнопку редактирования для игр, которые можно редактировать
         buttons.append([InlineKeyboardButton(text="✏️ Редактировать игру", callback_data=f"edit_game_{game.id}")])
     

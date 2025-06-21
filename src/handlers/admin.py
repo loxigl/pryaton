@@ -65,7 +65,6 @@ EDIT_GAME_DISTRICT_VALUE, EDIT_GAME_DATETIME_VALUE, EDIT_GAME_PARTICIPANTS_VALUE
 ADMIN_GAME_PATTERN = r"admin_game_(\d+)"
 ADMIN_CANCEL_PATTERN = r"cancel_game_(\d+)"
 ADMIN_START_PATTERN = r"start_game_(\d+)"
-ADMIN_ASSIGN_ROLES_PATTERN = r"assign_roles_(\d+)"
 ADMIN_EDIT_GAME_PATTERN = r"edit_game_(\d+)"
 EDIT_DISTRICT_PATTERN = r"edit_district_(\d+)"
 EDIT_DATETIME_PATTERN = r"edit_datetime_(\d+)"
@@ -291,53 +290,6 @@ async def start_game_button(update: Update, context: CallbackContext) -> None:
         "Всем участникам отправлены уведомления о начале игры.",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("« Назад к списку игр", callback_data="back_to_admin_games")
-        ]]),
-        parse_mode="HTML"
-    )
-
-async def assign_roles_button(update: Update, context: CallbackContext) -> None:
-    """Обработчик распределения ролей администратором"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    
-    # Проверяем, является ли пользователь администратором
-    if not UserService.is_admin(user_id):
-        await query.edit_message_text("У вас нет прав доступа.")
-        return
-    
-    # Извлекаем ID игры из колбэка
-    match = re.match(ADMIN_ASSIGN_ROLES_PATTERN, query.data)
-    if not match:
-        return
-    
-    game_id = int(match.group(1))
-    
-    # Распределяем роли
-    roles = GameService.assign_roles(game_id)
-    
-    if not roles:
-        await query.edit_message_text(
-            "❌ Не удалось распределить роли. Возможно, в игре нет участников.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("« Назад к управлению игрой", callback_data=f"admin_game_{game_id}")
-            ]])
-        )
-        return
-    
-    # Формируем сообщение с распределением ролей
-    game = GameService.get_game_by_id(game_id)
-    roles_info = "\n".join([
-        f"- {p.user.name}: {'🚗 Водитель' if p.role == GameRole.DRIVER else '🔍 Искатель'}" 
-        for p in game.participants if p.role
-    ])
-    
-    await query.edit_message_text(
-        f"✅ <b>Роли успешно распределены!</b>\n\n"
-        f"<b>Результаты распределения:</b>\n{roles_info}",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("« Назад к управлению игрой", callback_data=f"admin_game_{game_id}")
         ]]),
         parse_mode="HTML"
     )
@@ -3040,7 +2992,6 @@ admin_handlers = [
     CallbackQueryHandler(cancel_game_button, pattern=ADMIN_CANCEL_PATTERN),
     CallbackQueryHandler(start_game_button, pattern=ADMIN_START_PATTERN),
     CallbackQueryHandler(start_game_early_button, pattern=r"start_early_\d+"),
-    CallbackQueryHandler(assign_roles_button, pattern=ADMIN_ASSIGN_ROLES_PATTERN),
     CallbackQueryHandler(back_to_admin_games_button, pattern="back_to_admin_games"),
     CallbackQueryHandler(create_game_button, pattern="create_game"),
     CallbackQueryHandler(edit_game_inline_button, pattern=ADMIN_EDIT_GAME_PATTERN),
