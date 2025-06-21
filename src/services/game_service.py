@@ -337,6 +337,7 @@ class GameService:
                 logger.error(f"Игра {game_id} не в статусе 'скоро начнется', текущий статус: {game.status}")
                 return False
             
+            logger.info(f"Меняем статус игры {game_id} с {game.status} на HIDING_PHASE")
             game.status = GameStatus.HIDING_PHASE
             game.started_at = datetime.now()
             db.commit()
@@ -344,12 +345,16 @@ class GameService:
             logger.info(f"Игра {game_id} запущена, переведена в фазу пряток")
 
             # Добавляем задачу отправки обновленных клавиатур всем игрокам
+            logger.info(f"Вызываем KeyboardUpdateService.schedule_keyboard_updates_for_game({game_id})")
             from src.services.keyboard_update_service import KeyboardUpdateService
             KeyboardUpdateService.schedule_keyboard_updates_for_game(game_id)
+            logger.info(f"Вызов KeyboardUpdateService завершен для игры {game_id}")
             
             return True
         except Exception as e:
             logger.error(f"Ошибка при запуске игры {game_id}: {e}")
+            import traceback
+            logger.error(f"Полный трейс ошибки запуска игры: {traceback.format_exc()}")
             return False
     
     @staticmethod
