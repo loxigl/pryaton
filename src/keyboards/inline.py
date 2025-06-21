@@ -454,73 +454,155 @@ def get_role_assignment_type_keyboard(game_id):
     return InlineKeyboardMarkup(buttons)
 
 def get_manual_role_assignment_keyboard(game_id, participants, max_drivers):
-    """Клавиатура для ручного назначения ролей участникам"""
+    """Новая улучшенная клавиатура для ручного назначения ролей участникам"""
     buttons = []
     
-    # Группируем участников по ролям
+    # Подсчитываем текущие роли
     drivers = [p for p in participants if p.get("current_role") == "driver"]
     seekers = [p for p in participants if p.get("current_role") == "seeker"]
     unassigned = [p for p in participants if not p.get("current_role")]
     
-    # Показываем текущих водителей
-    if drivers:
-        buttons.append([InlineKeyboardButton(
-            text=f"🚗 ВОДИТЕЛИ ({len(drivers)}/{max_drivers})",
-            callback_data="info_drivers"
-        )])
-        for driver in drivers:
-            buttons.append([InlineKeyboardButton(
-                text=f"🚗 {driver['user_name']}",
-                callback_data=f"toggle_role_{game_id}_{driver['id']}_seeker"
-            )])
+    # Заголовок с текущим состоянием
+    status_text = f"👥 Участников: {len(participants)} | 🚗 Водители: {len(drivers)}/{max_drivers} | 🔍 Искатели: {len(seekers)}"
     
-    # Показываем текущих искателей
-    if seekers:
+    # Список всех участников с их текущими ролями
+    for participant in participants:
+        user_name = participant['user_name']
+        current_role = participant.get('current_role')
+        
+        if current_role == "driver":
+            role_emoji = "🚗"
+            role_text = "Водитель"
+        elif current_role == "seeker":
+            role_emoji = "🔍"
+            role_text = "Искатель"
+        else:
+            role_emoji = "❓"
+            role_text = "Не назначена"
+        
+        button_text = f"{role_emoji} {user_name} - {role_text}"
         buttons.append([InlineKeyboardButton(
-            text="🔍 ИСКАТЕЛИ",
-            callback_data="info_seekers"
+            text=button_text,
+            callback_data=f"edit_participant_role_{game_id}_{participant['id']}"
         )])
-        for seeker in seekers:
-            buttons.append([InlineKeyboardButton(
-                text=f"🔍 {seeker['user_name']}",
-                callback_data=f"toggle_role_{game_id}_{seeker['id']}_driver"
-            )])
     
-    # Показываем неназначенных участников
+    # Разделитель
+    buttons.append([InlineKeyboardButton(text="─" * 30, callback_data="separator")])
+    
+    # Кнопки быстрых действий
+    quick_actions = []
+    
+    # Автозаполнение - назначить роли автоматически оставшимся
     if unassigned:
-        buttons.append([InlineKeyboardButton(
-            text="❓ НЕ НАЗНАЧЕНЫ",
-            callback_data="info_unassigned"
-        )])
-        for participant in unassigned:
-            # Кнопки для назначения роли
-            row = []
-            if len(drivers) < max_drivers:
-                row.append(InlineKeyboardButton(
-                    text=f"🚗 {participant['user_name']}",
-                    callback_data=f"assign_role_{game_id}_{participant['id']}_driver"
-                ))
-            row.append(InlineKeyboardButton(
-                text=f"🔍 {participant['user_name']}",
-                callback_data=f"assign_role_{game_id}_{participant['id']}_seeker"
-            ))
-            buttons.append(row)
+        quick_actions.append(InlineKeyboardButton(
+            text="⚡ Автозаполнение",
+            callback_data=f"auto_fill_roles_{game_id}"
+        ))
     
-    # Кнопки управления
-    if len(drivers) > 0 and len(seekers) > 0:
+    # Сброс всех ролей
+    if drivers or seekers:
+        quick_actions.append(InlineKeyboardButton(
+            text="🔄 Сбросить все",
+            callback_data=f"reset_all_roles_{game_id}"
+        ))
+    
+    if quick_actions:
+        # Разбиваем кнопки быстрых действий по 2 в ряд
+        for i in range(0, len(quick_actions), 2):
+            buttons.append(quick_actions[i:i+2])
+    
+    # Кнопка подтверждения (доступна только если все роли назначены корректно)
+    can_confirm = (
+        len(unassigned) == 0 and 
+        len(drivers) > 0 and len(drivers) <= max_drivers and 
+        len(seekers) > 0
+    )
+    
+    if can_confirm:
         buttons.append([InlineKeyboardButton(
             text="✅ Подтвердить распределение",
             callback_data=f"confirm_manual_roles_{game_id}"
         )])
+    else:
+        # Показываем что нужно исправить
+        error_text = "❌ "
+        if len(unassigned) > 0:
+            error_text += f"Назначьте роли всем ({len(unassigned)} осталось)"
+        elif len(drivers) == 0:
+            error_text += "Нужен хотя бы 1 водитель"
+        elif len(drivers) > max_drivers:
+            error_text += f"Слишком много водителей ({len(drivers)}/{max_drivers})"
+        elif len(seekers) == 0:
+            error_text += "Нужен хотя бы 1 искатель"
+        
+        buttons.append([InlineKeyboardButton(
+            text=error_text,
+            callback_data="validation_error"
+        )])
     
-    buttons.append([InlineKeyboardButton(
-        text="🔄 Сбросить все роли",
-        callback_data=f"reset_all_roles_{game_id}"
-    )])
-    
+    # Кнопка возврата
     buttons.append([InlineKeyboardButton(
         text="◀️ Назад к выбору типа",
         callback_data=f"choose_role_assignment_type_{game_id}"
+    )])
+    
+    return InlineKeyboardMarkup(buttons)
+
+def get_participant_role_edit_keyboard(game_id, participant_id, participant_name, current_role, max_drivers, current_driver_count):
+    """Клавиатура для редактирования роли конкретного участника"""
+    buttons = []
+    
+    # Заголовок с именем участника
+    current_role_text = "Не назначена"
+    if current_role == "driver":
+        current_role_text = "🚗 Водитель"
+    elif current_role == "seeker":
+        current_role_text = "🔍 Искатель"
+    
+    # Кнопки выбора роли
+    role_buttons = []
+    
+    # Кнопка "Водитель"
+    can_be_driver = (current_role == "driver") or (current_driver_count < max_drivers)
+    if can_be_driver:
+        driver_text = "🚗 Назначить водителем"
+        if current_role == "driver":
+            driver_text = "🚗 Водитель (текущая)"
+        
+        role_buttons.append(InlineKeyboardButton(
+            text=driver_text,
+            callback_data=f"set_participant_role_{game_id}_{participant_id}_driver"
+        ))
+    else:
+        role_buttons.append(InlineKeyboardButton(
+            text=f"🚗 Водитель ({current_driver_count}/{max_drivers})",
+            callback_data="role_limit_reached"
+        ))
+    
+    # Кнопка "Искатель"
+    seeker_text = "🔍 Назначить искателем"
+    if current_role == "seeker":
+        seeker_text = "🔍 Искатель (текущая)"
+    
+    role_buttons.append(InlineKeyboardButton(
+        text=seeker_text,
+        callback_data=f"set_participant_role_{game_id}_{participant_id}_seeker"
+    ))
+    
+    # Размещаем кнопки ролей
+    buttons.append(role_buttons)
+    
+    # Кнопка сброса роли (если роль назначена)
+    if current_role:
+        buttons.append([InlineKeyboardButton(
+            text="❌ Убрать роль",
+            callback_data=f"set_participant_role_{game_id}_{participant_id}_none"
+        )])
+    
+    # Кнопка возврата
+    buttons.append([InlineKeyboardButton(
+        text="◀️ Назад к списку участников",
+        callback_data=f"assign_roles_manual_{game_id}"
     )])
     
     return InlineKeyboardMarkup(buttons)
