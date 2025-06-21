@@ -161,6 +161,16 @@ class ManualGameControlService:
             
             logger.info(f"Админ {admin_user_id} вручную отметил участника {participant_id} как найденного в игре {game_id}")
             
+            # КРИТИЧЕСКИ ВАЖНО: Проверяем завершение игры после изменения статуса
+            # Импортируем GameService здесь, чтобы избежать циклических импортов
+            try:
+                from src.services.game_service import GameService
+                # Проверяем, нужно ли завершить игру после изменения статуса
+                if GameService._check_auto_game_completion(game_id):
+                    logger.info(f"Игра {game_id} автоматически завершена после ручной отметки участника {participant_id}")
+            except Exception as completion_error:
+                logger.warning(f"Ошибка при проверке завершения игры {game_id}: {completion_error}")
+            
             return {
                 "success": True,
                 "message": f"Участник {participant.user.name} отмечен как найденный",
@@ -196,6 +206,15 @@ class ManualGameControlService:
             db.commit()
             
             logger.info(f"Админ {admin_user_id} вручную отметил участника {participant_id} как выбывшего в игре {game_id}")
+            
+            # КРИТИЧЕСКИ ВАЖНО: Проверяем завершение игры после изменения статуса
+            try:
+                from src.services.game_service import GameService
+                # Проверяем, нужно ли завершить игру после изменения статуса
+                if GameService._check_auto_game_completion(game_id):
+                    logger.info(f"Игра {game_id} автоматически завершена после отметки участника {participant_id} как выбывшего")
+            except Exception as completion_error:
+                logger.warning(f"Ошибка при проверке завершения игры {game_id}: {completion_error}")
             
             return {
                 "success": True,
@@ -235,6 +254,19 @@ class ManualGameControlService:
             db.commit()
             
             logger.info(f"Админ {admin_user_id} отменил отметку найденного для участника {participant_id} в игре {game_id}")
+            
+            # ВАЖНО: После отмены отметки игра может продолжиться, но проверим состояние
+            try:
+                from src.services.game_service import GameService
+                game = db.query(Game).filter(Game.id == game_id).first()
+                if game and game.status == GameStatus.COMPLETED:
+                    # Если игра была завершена, возвращаем её в активное состояние
+                    game.status = GameStatus.SEARCHING_PHASE
+                    game.ended_at = None
+                    db.commit()
+                    logger.info(f"Игра {game_id} возвращена в активное состояние после отмены отметки участника")
+            except Exception as status_error:
+                logger.warning(f"Ошибка при обновлении статуса игры {game_id}: {status_error}")
             
             return {
                 "success": True,
@@ -407,6 +439,33 @@ class ManualGameControlService:
             if not participant:
                 return {"success": False, "error": "Не удалось добавить участника"}
             
+            # КРИТИЧЕСКИ ВАЖНО: Назначаем роль новому участнику
+            # Если игра еще не началась, назначаем роль автоматически
+            if game.status in [GameStatus.RECRUITING, GameStatus.UPCOMING]:
+                try:
+                    # Считаем текущее распределение ролей
+                    current_drivers = sum(1 for p in game.participants if p.role == GameRole.DRIVER)
+                    current_seekers = sum(1 for p in game.participants if p.role == GameRole.SEEKER)
+                    
+                    # Назначаем роль в зависимости от потребностей
+                    if current_drivers < game.max_drivers:
+                        # Нужны водители
+                        participant.role = GameRole.DRIVER
+                        logger.info(f"Новому участнику {user_id} назначена роль DRIVER")
+                    else:
+                        # Назначаем искателя
+                        participant.role = GameRole.SEEKER
+                        logger.info(f"Новому участнику {user_id} назначена роль SEEKER")
+                    
+                    db.commit()
+                    
+                except Exception as role_error:
+                    logger.warning(f"Ошибка при назначении роли новому участнику: {role_error}")
+                    # Роль назначится позже при ручном назначении ролей
+            else:
+                # Если игра уже началась, требуется ручное назначение роли
+                logger.warning(f"Участник {user_id} добавлен в активную игру {game_id} без роли - требуется ручное назначение")
+            
             logger.info(f"Админ {admin_user_id} добавил участника {user_id} ({user.name}) в игру {game_id}")
             
             return {
@@ -451,6 +510,25 @@ class ManualGameControlService:
             db.commit()
             
             logger.info(f"Админ {admin_user_id} удалил участника {participant_id} ({participant_name}) из игры {game_id}")
+            
+            # ВАЖНО: После удаления участника проверяем логику игры
+            try:
+                # Если удален водитель, который был найден, это может повлиять на завершение игры
+                if participant.role == GameRole.DRIVER and participant.is_found:
+                    from src.services.game_service import GameService
+                    game_after_removal = db.query(Game).filter(Game.id == game_id).first()
+                    if game_after_removal and game_after_removal.status == GameStatus.COMPLETED:
+                        # Если игра завершена, но водитель удален, возвращаем в активное состояние
+                        remaining_drivers = [p for p in game_after_removal.participants if p.role == GameRole.DRIVER]
+                        unfound_drivers = [p for p in remaining_drivers if not p.is_found]
+                        
+                        if unfound_drivers:  # Есть ненайденные водители
+                            game_after_removal.status = GameStatus.SEARCHING_PHASE
+                            game_after_removal.ended_at = None
+                            db.commit()
+                            logger.info(f"Игра {game_id} возвращена в активное состояние после удаления найденного водителя")
+            except Exception as logic_error:
+                logger.warning(f"Ошибка при проверке логики игры после удаления участника: {logic_error}")
             
             return {
                 "success": True,
