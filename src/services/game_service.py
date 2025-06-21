@@ -102,6 +102,25 @@ class GameService:
         
         db.commit()
         
+        # КРИТИЧЕСКИ ВАЖНО: Проверяем и обновляем статус игры после изменения max_participants
+        if max_participants is not None:
+            # Получаем актуальное количество участников
+            actual_participants = db.query(GameParticipant).filter(GameParticipant.game_id == game_id).count()
+            
+            # Логика изменения статуса игры в зависимости от количества участников
+            if actual_participants >= game.max_participants:
+                # Достигнут лимит участников - переводим в UPCOMING
+                if game.status == GameStatus.RECRUITING:
+                    game.status = GameStatus.UPCOMING
+                    db.commit()
+                    logger.info(f"Игра {game_id} переведена в статус UPCOMING (достигнут лимит участников: {actual_participants}/{game.max_participants})")
+            else:
+                # Лимит не достигнут - переводим в RECRUITING (если была в UPCOMING)
+                if game.status == GameStatus.UPCOMING:
+                    game.status = GameStatus.RECRUITING
+                    db.commit()
+                    logger.info(f"Игра {game_id} переведена в статус RECRUITING (участников: {actual_participants}/{game.max_participants})")
+        
         # Если изменилось время игры, перепланируем уведомления
         if scheduled_at is not None:
             from src.services.enhanced_scheduler_service import get_enhanced_scheduler

@@ -469,6 +469,21 @@ class ManualGameControlService:
             
             logger.info(f"Админ {admin_user_id} добавил участника {user_id} ({user.name}) в игру {game_id}")
             
+            # ВАЖНО: Проверяем и обновляем статус игры после добавления участника
+            try:
+                # Получаем актуальное количество участников после добавления
+                updated_game = db.query(Game).filter(Game.id == game_id).first()
+                actual_participants = db.query(GameParticipant).filter(GameParticipant.game_id == game_id).count()
+                
+                # Если достигнут лимит участников, переводим игру в UPCOMING
+                if actual_participants >= updated_game.max_participants and updated_game.status == GameStatus.RECRUITING:
+                    updated_game.status = GameStatus.UPCOMING
+                    db.commit()
+                    logger.info(f"Игра {game_id} автоматически переведена в статус UPCOMING после добавления участника (участников: {actual_participants}/{updated_game.max_participants})")
+                    
+            except Exception as status_error:
+                logger.warning(f"Ошибка при обновлении статуса игры {game_id} после добавления участника: {status_error}")
+            
             return {
                 "success": True,
                 "message": f"Участник {user.name} добавлен в игру",
@@ -514,20 +529,29 @@ class ManualGameControlService:
             
             # ВАЖНО: После удаления участника проверяем логику игры
             try:
+                # Получаем актуальное количество участников после удаления
+                updated_game = db.query(Game).filter(Game.id == game_id).first()
+                actual_participants = db.query(GameParticipant).filter(GameParticipant.game_id == game_id).count()
+                
+                # Если игра была в UPCOMING, но участников стало меньше лимита, переводим в RECRUITING
+                if updated_game.status == GameStatus.UPCOMING and actual_participants < updated_game.max_participants:
+                    updated_game.status = GameStatus.RECRUITING
+                    db.commit()
+                    logger.info(f"Игра {game_id} автоматически переведена в статус RECRUITING после удаления участника (участников: {actual_participants}/{updated_game.max_participants})")
+                
                 # Если удален водитель, который был найден, это может повлиять на завершение игры
                 if participant.role == GameRole.DRIVER and participant.is_found:
-                    from src.services.game_service import GameService
-                    game_after_removal = db.query(Game).filter(Game.id == game_id).first()
-                    if game_after_removal and game_after_removal.status == GameStatus.COMPLETED:
+                    if updated_game.status == GameStatus.COMPLETED:
                         # Если игра завершена, но водитель удален, возвращаем в активное состояние
-                        remaining_drivers = [p for p in game_after_removal.participants if p.role == GameRole.DRIVER]
+                        remaining_drivers = [p for p in updated_game.participants if p.role == GameRole.DRIVER]
                         unfound_drivers = [p for p in remaining_drivers if not p.is_found]
                         
                         if unfound_drivers:  # Есть ненайденные водители
-                            game_after_removal.status = GameStatus.SEARCHING_PHASE
-                            game_after_removal.ended_at = None
+                            updated_game.status = GameStatus.SEARCHING_PHASE
+                            updated_game.ended_at = None
                             db.commit()
                             logger.info(f"Игра {game_id} возвращена в активное состояние после удаления найденного водителя")
+                            
             except Exception as logic_error:
                 logger.warning(f"Ошибка при проверке логики игры после удаления участника: {logic_error}")
             
