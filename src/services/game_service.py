@@ -193,9 +193,24 @@ class GameService:
         
         return db.query(Game).filter(
             Game.id.in_(game_ids),
-            Game.status.in_([GameStatus.UPCOMING, GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE])
+            Game.status.in_([GameStatus.HIDING_PHASE, GameStatus.SEARCHING_PHASE])
         ).order_by(Game.scheduled_at).all()
     
+    @staticmethod
+    def get_user_games_not_completed(user_id: int) -> List[Game]:
+        """Получение списка игр пользователя, которые не завершены"""
+        db_generator = get_db()
+        db = next(db_generator)
+        
+        # Подзапрос для получения ID игр, в которых участвует пользователь
+        game_ids = db.query(GameParticipant.game_id).filter(GameParticipant.user_id == user_id).all()
+        game_ids = [g[0] for g in game_ids]
+        
+        return db.query(Game).filter(
+            Game.id.in_(game_ids),
+            Game.status.in_([GameStatus.RECRUITING, GameStatus.UPCOMING,GameStatus.HIDING_PHASE,GameStatus.SEARCHING_PHASE])
+        ).order_by(Game.scheduled_at).all()
+
     @staticmethod
     def join_game(game_id: int, user_id: int) -> Optional[GameParticipant]:
         """Запись пользователя на игру"""

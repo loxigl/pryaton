@@ -79,7 +79,7 @@ async def my_games_command(update: Update, context: CallbackContext) -> None:
         return
     
     # Получаем список игр пользователя, используя правильный user.id
-    user_games = GameService.get_user_games(user.id)
+    user_games = GameService.get_user_games_not_completed(user.id)
     
     if not user_games:
         await update.message.reply_text(
