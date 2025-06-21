@@ -83,10 +83,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 return ENTER_CAR_NUMBER
         
         # Очищаем контекст игры при нажатии на главное меню
-        from src.services.user_context_service import UserContextService
-        game_context = UserContextService.get_user_game_context(user.id)
-        if game_context and game_context.status == UserContextService.STATUS_GAME_FINISHED:
-            UserContextService.clear_user_game_context(user.id)
         
         logger.info(f"Пользователь {user.id} уже зарегистрирован")
         welcome_text = (
