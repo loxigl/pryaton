@@ -51,17 +51,16 @@ class KeyboardUpdateService:
                 if scheduler and scheduler.bot:
                     logger.info("Планируем задачу обновления клавиатур через планировщик")
                     # Используем планировщик для создания задачи
-                    import asyncio
                     from datetime import datetime, timedelta
                     
                     # Планируем задачу на выполнение немедленно (через 1 секунду)
                     run_time = datetime.now() + timedelta(seconds=1)
                     
                     scheduler.scheduler.add_job(
-                        KeyboardUpdateService._send_keyboard_updates_sync,
+                        scheduler.send_keyboard_updates,  # Используем метод планировщика
                         trigger='date',
                         run_date=run_time,
-                        args=[user_ids, scheduler.bot],
+                        args=[user_ids, game_id],
                         id=f"keyboard_update_{game_id}_{int(run_time.timestamp())}",
                         replace_existing=True
                     )
@@ -79,9 +78,9 @@ class KeyboardUpdateService:
     
     @staticmethod
     async def _send_keyboard_updates_sync(user_ids: List[int], bot: Bot) -> None:
-        """Отправляет сообщения для обновления клавиатур пользователям (асинхронная версия для планировщика)"""
+        """Устаревший метод - оставлен для совместимости"""
         try:
-            logger.info(f"🚀 Начинаем отправку обновлений клавиатур для {len(user_ids)} пользователей")
+            logger.info(f"🚀 (УСТАРЕВШИЙ МЕТОД) Начинаем отправку обновлений клавиатур для {len(user_ids)} пользователей")
             
             logger.info(f"Используем бот: {bot}")
             

@@ -828,14 +828,12 @@ class EnhancedSchedulerService:
             if not game:
                 return
             
-            current_time = datetime.now(DEFAULT_TIMEZONE)
-            
             end_text = (
                 f"🏁 <b>Игра завершена!</b>\n\n"
                 f"🎮 <b>Игра:</b> {game.district}\n"
-                f"⏰ <b>Время завершения:</b> {self.format_msk_time(current_time)}\n\n"
+                f"⏰ <b>Время завершения:</b> {self.format_msk_time(datetime.now(DEFAULT_TIMEZONE))}\n\n"
                 f"<b>Причина:</b> {reason}\n\n"
-                f"Спасибо за участие! Ждем вас в новых играх!"
+                f"Спасибо за участие! До встречи в новых играх! 🎉"
             )
             
             sent_count = 0
@@ -856,6 +854,46 @@ class EnhancedSchedulerService:
             
         except Exception as e:
             logger.error(f"Ошибка уведомления о завершении игры {game_id}: {e}")
+
+    async def send_keyboard_updates(self, user_ids: list, game_id: int):
+        """Отправка обновлений клавиатур пользователям - выполняется планировщиком"""
+        try:
+            logger.info(f"🚀 Начинаем отправку обновлений клавиатур для {len(user_ids)} пользователей игры {game_id}")
+            
+            sent_count = 0
+            for user_id in user_ids:
+                try:
+                    logger.info(f"Обрабатываем пользователя {user_id}")
+                    
+                    # Получаем актуальную клавиатуру для пользователя
+                    from src.keyboards.reply import get_contextual_main_keyboard
+                    keyboard = get_contextual_main_keyboard(user_id)
+                    logger.info(f"Получена клавиатура для пользователя {user_id}: {len(keyboard.keyboard)} рядов")
+                    
+                    # Отправляем сообщение с новой клавиатурой
+                    logger.info(f"Отправляем сообщение пользователю {user_id}")
+                    message = await self.bot.send_message(
+                        chat_id=user_id,
+                        text="🔄 <b>Игра началась или изменила статус!</b>\n\nОбновляем вашу клавиатуру для доступа к игровым функциям.",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                    logger.info(f"Сообщение отправлено пользователю {user_id}, message_id: {message.message_id}")
+                    sent_count += 1
+                    
+                    # Небольшая задержка между сообщениями
+                    await asyncio.sleep(0.1)
+                except Exception as e:
+                    logger.error(f"Ошибка при отправке обновления клавиатуры пользователю {user_id}: {e}")
+                    import traceback
+                    logger.error(f"Трейс ошибки для пользователя {user_id}: {traceback.format_exc()}")
+            
+            logger.info(f"✅ Отправлены обновления клавиатур {sent_count}/{len(user_ids)} пользователям игры {game_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при отправке обновлений клавиатур игры {game_id}: {e}")
+            import traceback
+            logger.error(f"Полный трейс ошибки отправки: {traceback.format_exc()}")
 
 
 # Глобальный экземпляр планировщика
